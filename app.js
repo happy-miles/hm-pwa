@@ -141,23 +141,42 @@ function fetchSheetData(force = false) {
                 appState.sheetTitle = data.title || "Happy Miles";
                 appState.sheetData = data.sheets;
                 appState.hiddenCols = data.hiddenCols || {};
-                localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets, hiddenCols: appState.hiddenCols }));
+                
+                try {
+                    localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets, hiddenCols: appState.hiddenCols }));
+                } catch(e) { console.warn("Data cache full"); }
+                
                 buildUIFromSheetData(); 
-                fetchSheetFormatting();
             }
         }).catch(err => console.log("Data Fetch failed", err));
 }
 
-function fetchSheetFormatting() {
-    fetch(`${CONFIG.APPS_SCRIPT_URL}?action=getFormat&sheetId=${appState.user.spreadsheetId}`)
+function fetchSheetFormatting(sheetName) {
+    showToast(`🎨 Loading layout for ${sheetName}...`);
+    
+    fetch(`${CONFIG.APPS_SCRIPT_URL}?action=getFormat&sheetId=${appState.user.spreadsheetId}&sheetName=${encodeURIComponent(sheetName)}`)
         .then(res => res.json())
         .then(data => {
-            if (data.status === "success") {
-                appState.sheetFormats = data.formats;
-                try { localStorage.setItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE, JSON.stringify(data.formats)); } catch(e){}
-                buildUIFromSheetData(); 
+            if (data.status === "success" && data.formats) {
+                appState.sheetFormats[sheetName] = data.formats[sheetName];
+                
+                try { 
+                    localStorage.setItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE, JSON.stringify(appState.sheetFormats)); 
+                } catch(e) { 
+                    console.warn("Format cache quota exceeded. Holding in memory."); 
+                    // Failsafe: Clear cache if it gets too heavy, keep new data in memory
+                    localStorage.removeItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE);
+                }
+                
+                if (appState.activeTab === sheetName) applyFilterAndSearch();
+                showToast(`✅ ${sheetName} layout applied.`);
+            } else {
+                showToast(`⚠️ Layout error: ${data.message || 'Unknown'}`);
             }
-        }).catch(err => console.log("Format Fetch failed", err));
+        }).catch(err => {
+            console.log("Format Fetch failed", err);
+            showToast(`⚠️ Network error loading layout.`);
+        });
 }
 
 function buildUIFromSheetData() {
@@ -183,7 +202,14 @@ function switchTab(name) {
     appState.activeTab = name;
     document.querySelectorAll(".tab-item").forEach(t => t.classList.toggle("active", t.innerText === name));
     document.getElementById("searchBox").value = "";
-    populateFilterDropdown(); applyFilterAndSearch();
+    populateFilterDropdown(); 
+    
+    // Core Fix: Fetch formatting only when user clicks the tab
+    if (!appState.sheetFormats[name] && navigator.onLine) {
+        fetchSheetFormatting(name);
+    }
+    
+    applyFilterAndSearch();
 }
 
 function populateFilterDropdown() {
@@ -226,7 +252,6 @@ function applyFilterAndSearch() {
     document.getElementById("rowCount").innerText = `${body.length} rows`;
     renderTable(headers, body, fmt, hCols);
     
-    // Pass raw data for subtotal calculation
     calculateSubtotals(headers[headers.length-1]?.data || [], body, hCols);
 }
 
@@ -242,7 +267,6 @@ function renderTable(headers, bodyRows, fmt, hCols) {
     let html = `<table class="sheet-table">`;
     let skipCell = {}; let spanAttrs = {};
     
-    // Dynamically recalculate merges around hidden rows and columns
     if (fmt && fmt.merges) {
         fmt.merges.forEach(m => {
             let visibleColspan = 0; let visibleRowspan = 0;
@@ -278,7 +302,7 @@ function renderTable(headers, bodyRows, fmt, hCols) {
         let stickyColCounter = 0;
         
         for (let c = 0; c < totalCols; c++) {
-            if (hCols[c]) continue; // Entirely skips rendering hidden columns
+            if (hCols[c]) continue; 
             if (skipCell[`${origR}_${c}`]) {
                 if (fmt && fmt.frozenColumns && stickyColCounter < fmt.frozenColumns) stickyColCounter++;
                 continue; 
@@ -295,7 +319,6 @@ function renderTable(headers, bodyRows, fmt, hCols) {
                 if (fmt.ha && fmt.ha[origR] && fmt.ha[origR][c] && fmt.ha[origR][c] !== "") style += `text-align: ${fmt.ha[origR][c]};`;
                 if (fmt.va && fmt.va[origR] && fmt.va[origR][c] && fmt.va[origR][c] !== "") style += `vertical-align: ${fmt.va[origR][c]};`;
                 
-                // Track visible columns for proper sticky assignment
                 if (fmt.frozenColumns && stickyColCounter < fmt.frozenColumns) {
                     classes.push("sticky-col");
                     stickyColCounter++;
@@ -355,7 +378,7 @@ function calculateSubtotals(headerRow, bodyRows, hCols) {
 
     let statHtml = `<div class="stat-group">`;
     headerRow.forEach((h, colIdx) => {
-        if (hCols[colIdx]) return; // Skip subtotal calculation for hidden columns
+        if (hCols[colIdx]) return; 
         
         let numericVals = bodyRows.map(r => parseFloat(String(r.data[colIdx]).replace(/[^0-9.-]+/g, ""))).filter(v => !isNaN(v));
         if (numericVals.length > 0 && numericVals.length >= bodyRows.length * 0.4 && String(h).trim() !== "") {
