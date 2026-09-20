@@ -1,56 +1,29 @@
 let appState = {
-    isLoggedIn: false,
-    user: null,
-    sheetData: {},
-    activeTab: null,
-    filteredRows: [],
-    queue: [],
-    imageQueue: [],
-    onDuty: false,
-    onBreak: false,
-    startOdo: 0,
-    shiftStartTime: null,
-    breakStartTime: null,
-    totalBreakDurationMs: 0,
-    liveTimerInterval: null,
-    pendingOdoType: null,
-    map: null,
-    gpsWatchId: null,
-    userMarker: null,
-    routePolyline: null,
-    routeCoords: [],
-    deferredPrompt: null,
-    currentImageBase64: null,
-    currentReceiptBase64: null
+    isLoggedIn: false, user: null,
+    sheetTitle: "Happy Miles", sheetData: {}, sheetColors: {}, activeTab: null,
+    filteredCombined: [], queue: [], imageQueue: [],
+    onDuty: false, onBreak: false, startOdo: 0, shiftStartTime: null, breakStartTime: null, totalBreakDurationMs: 0,
+    liveTimerInterval: null, backgroundSyncInterval: null, pendingOdoType: null, map: null, gpsWatchId: null,
+    userMarker: null, routePolyline: null, routeCoords: [], deferredPrompt: null,
+    currentImageBase64: null, currentReceiptBase64: null
 };
 
-document.addEventListener("DOMContentLoaded", () => {
-    initApp();
-});
+document.addEventListener("DOMContentLoaded", () => { initApp(); });
 
 function initApp() {
-    registerServiceWorker();
-    setupPWAInstallPrompt();
-    loadLocalStorageState();
-    checkAuth();
-
+    registerServiceWorker(); setupPWAInstallPrompt(); loadLocalStorageState(); checkAuth();
     window.addEventListener("online", updateNetworkStatus);
     window.addEventListener("offline", updateNetworkStatus);
     updateNetworkStatus();
 }
 
 function registerServiceWorker() {
-    if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("./sw.js")
-            .then(() => console.log("Service Worker registered."))
-            .catch(err => console.error("SW registration failed:", err));
-    }
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(e => console.log("SW error", e));
 }
 
 function setupPWAInstallPrompt() {
     window.addEventListener("beforeinstallprompt", (e) => {
-        e.preventDefault();
-        appState.deferredPrompt = e;
+        e.preventDefault(); appState.deferredPrompt = e;
         const btn = document.getElementById("pwaInstallBtn");
         if (btn) btn.style.display = "inline-flex";
     });
@@ -59,62 +32,63 @@ function setupPWAInstallPrompt() {
 function installPWA() {
     if (appState.deferredPrompt) {
         appState.deferredPrompt.prompt();
-        appState.deferredPrompt.userChoice.then((choiceResult) => {
-            if (choiceResult.outcome === "accepted") {
-                document.getElementById("pwaInstallBtn").style.display = "none";
-            }
+        appState.deferredPrompt.userChoice.then((c) => {
+            if (c.outcome === "accepted") document.getElementById("pwaInstallBtn").style.display = "none";
             appState.deferredPrompt = null;
         });
     }
 }
 
 function loadLocalStorageState() {
-    const savedTheme = localStorage.getItem(CONFIG.STORAGE_KEYS.THEME);
-    if (savedTheme === "dark") document.documentElement.classList.add("dark");
-
-    const savedQueue = localStorage.getItem(CONFIG.STORAGE_KEYS.QUEUE);
-    if (savedQueue) try { appState.queue = JSON.parse(savedQueue); } catch (e) { appState.queue = []; }
-
-    const savedImgQueue = localStorage.getItem(CONFIG.STORAGE_KEYS.IMAGE_QUEUE);
-    if (savedImgQueue) try { appState.imageQueue = JSON.parse(savedImgQueue); } catch (e) { appState.imageQueue = []; }
-
+    try { appState.queue = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEYS.QUEUE)) || []; } catch(e){}
+    try { appState.imageQueue = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEYS.IMAGE_QUEUE)) || []; } catch(e){}
     const savedDuty = localStorage.getItem(CONFIG.STORAGE_KEYS.DUTY_STATE);
     if (savedDuty) {
         try {
-            const duty = JSON.parse(savedDuty);
-            appState.onDuty = duty.onDuty || false;
-            appState.startOdo = duty.startOdo || 0;
-            appState.shiftStartTime = duty.shiftStartTime ? new Date(duty.shiftStartTime) : null;
-            appState.onBreak = duty.onBreak || false;
-            appState.totalBreakDurationMs = duty.totalBreakDurationMs || 0;
-        } catch (e) { }
+            const d = JSON.parse(savedDuty);
+            appState.onDuty = d.onDuty || false; appState.startOdo = d.startOdo || 0;
+            appState.shiftStartTime = d.shiftStartTime ? new Date(d.shiftStartTime) : null;
+            appState.onBreak = d.onBreak || false; appState.totalBreakDurationMs = d.totalBreakDurationMs || 0;
+        } catch(e){}
     }
     updateQueueBadge();
 }
 
 function saveDutyState() {
-    const dutyData = {
-        onDuty: appState.onDuty,
-        startOdo: appState.startOdo,
+    localStorage.setItem(CONFIG.STORAGE_KEYS.DUTY_STATE, JSON.stringify({
+        onDuty: appState.onDuty, startOdo: appState.startOdo,
         shiftStartTime: appState.shiftStartTime ? appState.shiftStartTime.toISOString() : null,
-        onBreak: appState.onBreak,
-        totalBreakDurationMs: appState.totalBreakDurationMs
-    };
-    localStorage.setItem(CONFIG.STORAGE_KEYS.DUTY_STATE, JSON.stringify(dutyData));
+        onBreak: appState.onBreak, totalBreakDurationMs: appState.totalBreakDurationMs
+    }));
 }
 
 function checkAuth() {
-    const token = localStorage.getItem(CONFIG.STORAGE_KEYS.AUTH);
-    const userStr = localStorage.getItem(CONFIG.STORAGE_KEYS.USER);
-    if (token && userStr) {
-        appState.isLoggedIn = true;
-        appState.user = JSON.parse(userStr);
+    const t = localStorage.getItem(CONFIG.STORAGE_KEYS.AUTH);
+    const uStr = localStorage.getItem(CONFIG.STORAGE_KEYS.USER);
+    if (t && uStr) {
+        appState.isLoggedIn = true; appState.user = JSON.parse(uStr);
         document.getElementById("loginOverlay").style.display = "none";
         document.getElementById("dashboardPanel").style.display = "flex";
-        document.getElementById("statusText").innerText = `User: ${appState.user.username}`;
         restoreDutyUI();
-        setTimeout(initMap, 100); 
-        fetchSheetData();
+        
+        // 3-hour Auto Refresh (10,800,000 ms)
+        if(appState.backgroundSyncInterval) clearInterval(appState.backgroundSyncInterval);
+        appState.backgroundSyncInterval = setInterval(() => fetchSheetData(true), 10800000);
+        
+        document.getElementById("dutyAccordion").addEventListener("toggle", (e) => {
+            if(e.target.open && !appState.map) setTimeout(initMap, 100);
+        });
+
+        // Load cached instantly, then fetch fresh if online
+        const c = localStorage.getItem(CONFIG.STORAGE_KEYS.DATA_CACHE);
+        if(c) {
+            try { 
+                const parsed = JSON.parse(c);
+                appState.sheetTitle = parsed.title; appState.sheetData = parsed.sheets; appState.sheetColors = parsed.colors;
+                buildUIFromSheetData(); 
+            } catch(e){}
+        }
+        if(navigator.onLine) fetchSheetData(true);
     } else {
         appState.isLoggedIn = false;
         document.getElementById("loginOverlay").style.display = "flex";
@@ -126,234 +100,191 @@ function handleLogin(e) {
     e.preventDefault();
     const u = document.getElementById("username").value.trim();
     const p = document.getElementById("password").value.trim();
-    const errDiv = document.getElementById("loginError");
-
     if (CONFIG.USERS[u] && CONFIG.USERS[u].password === p) {
-        errDiv.style.display = "none";
-        const token = "TOKEN_" + Date.now();
-        const userObj = { 
-            username: u, 
-            loginTime: new Date().toISOString(),
-            spreadsheetId: CONFIG.USERS[u].spreadsheetId 
-        };
-        localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH, token);
-        localStorage.setItem(CONFIG.STORAGE_KEYS.USER, JSON.stringify(userObj));
+        document.getElementById("loginError").style.display = "none";
+        localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH, "TOKEN_" + Date.now());
+        localStorage.setItem(CONFIG.STORAGE_KEYS.USER, JSON.stringify({ username: u, spreadsheetId: CONFIG.USERS[u].spreadsheetId }));
+        
+        // Hard wipe cache on fresh login (Issue 4)
+        localStorage.removeItem(CONFIG.STORAGE_KEYS.DATA_CACHE);
+        appState.sheetData = {}; appState.sheetColors = {}; appState.sheetTitle = "Happy Miles";
         checkAuth();
     } else {
-        errDiv.style.display = "block";
+        document.getElementById("loginError").style.display = "block";
     }
 }
 
 function logout() {
     localStorage.removeItem(CONFIG.STORAGE_KEYS.AUTH);
     localStorage.removeItem(CONFIG.STORAGE_KEYS.USER);
+    localStorage.removeItem(CONFIG.STORAGE_KEYS.DATA_CACHE); // Destroy data on logout
     stopGpsTracking();
     if (appState.liveTimerInterval) clearInterval(appState.liveTimerInterval);
+    if (appState.backgroundSyncInterval) clearInterval(appState.backgroundSyncInterval);
     checkAuth();
-}
-
-function toggleTheme() {
-    document.documentElement.classList.toggle("dark");
-    const isDark = document.documentElement.classList.contains("dark");
-    localStorage.setItem(CONFIG.STORAGE_KEYS.THEME, isDark ? "dark" : "light");
 }
 
 function updateNetworkStatus() {
     const dot = document.getElementById("statusDot");
-    const text = document.getElementById("statusText");
     if (navigator.onLine) {
         dot.classList.remove("error");
-        if (appState.isLoggedIn) {
-            text.innerText = `Online (${appState.user.username})`;
-            processQueue();       
-            processImageQueue();  
-        } else {
-            text.innerText = "Online";
-        }
+        if (appState.isLoggedIn) { processQueue(); processImageQueue(); }
     } else {
         dot.classList.add("error");
-        text.innerText = "Offline Mode";
+        showToast("Offline Mode");
     }
 }
 
-function fetchSheetData(forceRefresh = false) {
+function fetchSheetData(force = false) {
+    if (!navigator.onLine) return;
     const sheetArea = document.getElementById("sheetArea");
-
-    if (!forceRefresh) {
-        const cached = localStorage.getItem(CONFIG.STORAGE_KEYS.DATA_CACHE);
-        if (cached) {
-            try {
-                appState.sheetData = JSON.parse(cached);
-                buildUIFromSheetData();
-                return;
-            } catch (e) { }
-        }
-    }
-
-    if (!navigator.onLine) {
-        showToast("Offline: Showing cached data.");
-        return;
-    }
-
-    sheetArea.innerHTML = `<div class="loading-screen"><div class="spinner"></div><div>Loading fleet data...</div></div>`;
+    if(force && Object.keys(appState.sheetData).length === 0) sheetArea.innerHTML = `<div class="loading-screen"><div class="spinner"></div><div>Fetching live ledger...</div></div>`;
 
     fetch(`${CONFIG.APPS_SCRIPT_URL}?action=getData&sheetId=${appState.user.spreadsheetId}`)
         .then(res => res.json())
         .then(data => {
-            if (data.status === "success" || data.sheets) {
-                appState.sheetData = data.sheets || data;
-                localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify(appState.sheetData));
+            if (data.status === "success") {
+                appState.sheetTitle = data.title || "Happy Miles";
+                appState.sheetData = data.sheets;
+                appState.sheetColors = data.colors;
+                localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets, colors: data.colors }));
                 buildUIFromSheetData();
-                showToast("Data updated successfully.");
-            } else {
-                throw new Error(data.message || "Invalid structure from Apps Script");
+                showToast("Ledger updated.");
             }
         })
-        .catch(err => {
-            const cached = localStorage.getItem(CONFIG.STORAGE_KEYS.DATA_CACHE);
-            if (cached) {
-                appState.sheetData = JSON.parse(cached);
-                buildUIFromSheetData();
-                showToast("Fetch failed. Loaded offline cache.");
-            } else {
-                sheetArea.innerHTML = `<div class="error-box">Failed to fetch data: ${err.message}</div>`;
-            }
-        });
+        .catch(err => console.log("Fetch failed", err));
 }
 
 function buildUIFromSheetData() {
+    document.getElementById("pageTitle").innerText = appState.sheetTitle;
     const tabBar = document.getElementById("tabBar");
     tabBar.innerHTML = "";
     const sheetNames = Object.keys(appState.sheetData);
+    if (sheetNames.length === 0) { document.getElementById("sheetArea").innerHTML = `<div class="loading-screen">No data.</div>`; return; }
 
-    if (sheetNames.length === 0) {
-        document.getElementById("sheetArea").innerHTML = `<div class="loading-screen">No sheet data available.</div>`;
-        return;
-    }
-
-    sheetNames.forEach((name, idx) => {
-        const tabBtn = document.createElement("div");
-        tabBtn.className = `tab-item ${idx === 0 || name === appState.activeTab ? 'active' : ''}`;
-        tabBtn.innerText = name;
-        tabBtn.onclick = () => switchTab(name);
-        tabBar.appendChild(tabBtn);
+    sheetNames.forEach((n, idx) => {
+        const btn = document.createElement("div");
+        btn.className = `tab-item ${n === appState.activeTab || (!appState.activeTab && idx === 0) ? 'active' : ''}`;
+        btn.innerText = n;
+        btn.onclick = () => switchTab(n);
+        tabBar.appendChild(btn);
     });
 
-    if (!appState.activeTab || !appState.sheetData[appState.activeTab]) {
-        appState.activeTab = sheetNames[0];
-    }
+    if (!appState.activeTab || !appState.sheetData[appState.activeTab]) appState.activeTab = sheetNames[0];
     switchTab(appState.activeTab);
 }
 
-function switchTab(tabName) {
-    appState.activeTab = tabName;
-    document.querySelectorAll(".tab-item").forEach(t => {
-        t.classList.toggle("active", t.innerText === tabName);
-    });
-
+function switchTab(name) {
+    appState.activeTab = name;
+    document.querySelectorAll(".tab-item").forEach(t => t.classList.toggle("active", t.innerText === name));
     document.getElementById("searchBox").value = "";
-    populateFilterDropdown();
-    applyFilterAndSearch();
+    populateFilterDropdown(); applyFilterAndSearch();
 }
 
 function populateFilterDropdown() {
-    const filterBox = document.getElementById("filterBox");
-    filterBox.innerHTML = `<option value="all">All Rows</option>`;
-    
-    const rows = appState.sheetData[appState.activeTab] || [];
-    if (rows.length < 2) return;
-
-    const headers = rows[0];
-    const statusColIdx = headers.findIndex(h => String(h).toLowerCase().includes("status") || String(h).toLowerCase().includes("type"));
-    
-    if (statusColIdx !== -1) {
-        const uniqueValues = new Set();
-        for (let i = 1; i < rows.length; i++) {
-            if (rows[i][statusColIdx]) uniqueValues.add(rows[i][statusColIdx]);
-        }
-        uniqueValues.forEach(val => {
-            const opt = document.createElement("option");
-            opt.value = val;
-            opt.innerText = val;
-            filterBox.appendChild(opt);
-        });
-    }
+    const fb = document.getElementById("filterBox");
+    fb.innerHTML = `<option value="all">All Rows</option>`;
 }
 
 function handleSearchInput() { applyFilterAndSearch(); }
 function handleFilterChange() { applyFilterAndSearch(); }
 
 function applyFilterAndSearch() {
-    const rows = appState.sheetData[appState.activeTab] || [];
-    if (rows.length === 0) {
-        renderTable([], []);
-        return;
+    const rawRows = appState.sheetData[appState.activeTab] || [];
+    const rawColors = appState.sheetColors[appState.activeTab] || [];
+    if (rawRows.length === 0) { renderTable([]); return; }
+
+    let combined = rawRows.map((row, i) => ({ data: row, color: rawColors[i] || [], origIndex: i }));
+    const term = document.getElementById("searchBox").value.toLowerCase().trim();
+    
+    // Header detection (Finds first row starting with a date pattern)
+    let headerEndIdx = 1; 
+    for(let i = 0; i < Math.min(10, combined.length); i++) {
+        if (/^\d{1,2}-[a-zA-Z]{3}-\d{2,4}$/.test(String(combined[i].data[0]).trim())) { headerEndIdx = i; break; }
     }
+    if (headerEndIdx === 0) headerEndIdx = 1;
 
-    const headers = rows[0];
-    const dataRows = rows.slice(1);
-    const searchTerm = document.getElementById("searchBox").value.toLowerCase().trim();
-    const filterVal = document.getElementById("filterBox").value;
+    let headers = combined.slice(0, headerEndIdx);
+    let body = combined.slice(headerEndIdx);
 
-    appState.filteredRows = dataRows.filter(row => {
-        const matchesSearch = searchTerm === "" || row.some(cell => String(cell).toLowerCase().includes(searchTerm));
-        const matchesFilter = filterVal === "all" || row.some(cell => String(cell) === filterVal);
-        return matchesSearch && matchesFilter;
-    });
-
-    document.getElementById("rowCount").innerText = `${appState.filteredRows.length} rows`;
-    renderTable(headers, appState.filteredRows);
-    calculateSubtotals(headers, appState.filteredRows);
+    if (term !== "") body = body.filter(r => r.data.some(c => String(c).toLowerCase().includes(term)));
+    
+    appState.filteredCombined = headers.concat(body);
+    document.getElementById("rowCount").innerText = `${body.length} rows`;
+    renderTable(headers, body);
+    calculateSubtotals(headers[headers.length-1]?.data || rawRows[0], body);
 }
 
-function renderTable(headers, rows) {
+function renderTable(headers, bodyRows) {
     const sheetArea = document.getElementById("sheetArea");
-    if (!headers || headers.length === 0) {
-        sheetArea.innerHTML = `<div class="loading-screen">No data in sheet</div>`;
-        return;
-    }
+    if (headers.length === 0) { sheetArea.innerHTML = `<div class="loading-screen">Empty</div>`; return; }
 
-    let html = `<table class="sheet-table"><thead><tr>`;
-    headers.forEach(h => html += `<th>${h}</th>`);
-    html += `</tr></thead><tbody>`;
+    let html = `<table class="sheet-table"><thead>`;
+    
+    // Render Frozen Headers with colspans and manual background colors
+    headers.forEach(rowObj => {
+        html += `<tr>`;
+        let skip = 0;
+        for (let i = 0; i < rowObj.data.length; i++) {
+            if (skip > 0) { skip--; continue; }
+            let val = rowObj.data[i];
+            let colspan = 1;
+            // Calculate empty string merges
+            while (i + colspan < rowObj.data.length && rowObj.data[i + colspan] === "") colspan++;
+            skip = colspan - 1;
+            
+            let bg = rowObj.color[i] && rowObj.color[i] !== "#ffffff" ? `background-color: ${rowObj.color[i]} !important;` : "";
+            html += `<th colspan="${colspan}" style="${bg}">${val}</th>`;
+        }
+        html += `</tr>`;
+    });
+    html += `</thead><tbody>`;
 
-    if (rows.length === 0) {
-        html += `<tr><td colspan="${headers.length}" style="text-align:center;">No matching records</td></tr>`;
+    // Render Data Rows with integer rounding, zero-blanking, and manual colors
+    if (bodyRows.length === 0) {
+        html += `<tr><td colspan="${headers[0].data.length}" style="text-align:center;">No records found</td></tr>`;
     } else {
-        rows.forEach(row => {
+        bodyRows.forEach(rowObj => {
             html += `<tr>`;
-            headers.forEach((h, idx) => {
-                const val = row[idx] !== undefined ? row[idx] : "";
-                const isDateCol = String(h).toLowerCase().includes("date") || idx === 0;
-                const cellClass = isDateCol ? 'class="col-date"' : '';
+            rowObj.data.forEach((val, idx) => {
+                let displayVal = val;
+                let isDateCol = idx === 0;
+                let bg = rowObj.color[idx] && rowObj.color[idx] !== "#ffffff" ? `background-color: ${rowObj.color[idx]};` : "";
                 
-                if (typeof val === "string" && val.startsWith("http")) {
-                    html += `<td ${cellClass}><a href="${val}" target="_blank" style="color: #1a73e8; text-decoration: underline; font-weight: 500;">📄 View Proof</a></td>`;
+                // Zero-blanking & Number format logic
+                let valStr = String(val).trim();
+                let num = parseFloat(valStr.replace(/,/g, ''));
+                if (!isNaN(num) && valStr !== "" && !/^[a-zA-Z]/.test(valStr) && !/^\d{1,2}-[a-zA-Z]{3}-\d{2,4}$/.test(valStr)) {
+                    let rounded = Math.round(num);
+                    if (rounded === 0) displayVal = "";
+                    else displayVal = rounded.toLocaleString('en-IN');
+                }
+
+                if (typeof displayVal === "string" && displayVal.startsWith("http")) {
+                    html += `<td style="${bg}"><a href="${displayVal}" target="_blank" style="color:#1a73e8;text-decoration:underline;">Proof</a></td>`;
                 } else {
-                    html += `<td ${cellClass}>${val}</td>`;
+                    let dateClass = isDateCol ? 'class="col-date"' : '';
+                    html += `<td ${dateClass} style="${bg}">${displayVal}</td>`;
                 }
             });
             html += `</tr>`;
         });
     }
-
     html += `</tbody></table>`;
     sheetArea.innerHTML = html;
 }
 
-function calculateSubtotals(headers, rows) {
+function calculateSubtotals(headerRow, bodyRows) {
     const bar = document.getElementById("subtotalBar");
     bar.innerHTML = "";
-    if (!rows || rows.length === 0) return;
+    if (bodyRows.length === 0) return;
 
-    let statHtml = `<div class="stat-group"><span class="val-pos">Summary:</span>`;
-    headers.forEach((h, colIdx) => {
-        let numericValues = rows.map(r => parseFloat(String(r[colIdx]).replace(/[^0-9.-]+/g, ""))).filter(v => !isNaN(v));
-        if (numericValues.length > 0 && numericValues.length >= rows.length * 0.5) {
-            const sum = numericValues.reduce((a, b) => a + b, 0);
-            const isCurrency = String(h).toLowerCase().includes("cost") || String(h).toLowerCase().includes("amount") || String(h).toLowerCase().includes("price") || String(h).toLowerCase().includes("₹");
-            const formatted = isCurrency ? `₹${sum.toLocaleString('en-IN', {minimumFractionDigits: 2})}` : sum.toLocaleString('en-IN');
-            statHtml += `<span><strong>${h}:</strong> <span class="${sum >= 0 ? 'val-pos' : 'val-neg'}">${formatted}</span></span>`;
+    let statHtml = `<div class="stat-group">`;
+    headerRow.forEach((h, colIdx) => {
+        let numericVals = bodyRows.map(r => parseFloat(String(r.data[colIdx]).replace(/[^0-9.-]+/g, ""))).filter(v => !isNaN(v));
+        if (numericVals.length > 0 && numericVals.length >= bodyRows.length * 0.4 && String(h).trim() !== "") {
+            let sum = Math.round(numericVals.reduce((a, b) => a + b, 0));
+            statHtml += `<span><strong>${h}:</strong> <span class="${sum >= 0 ? 'val-pos' : 'val-neg'}">${sum.toLocaleString('en-IN')}</span></span>`;
         }
     });
     statHtml += `</div>`;
@@ -369,419 +300,165 @@ function restoreDutyUI() {
     toggle.checked = appState.onDuty;
     if (appState.onDuty) {
         badge.innerText = appState.onBreak ? "ON BREAK" : "ON DUTY";
-        badge.style.background = appState.onBreak ? "#fff8e1" : "#e6f4ea";
-        badge.style.color = appState.onBreak ? "#b78103" : "#137333";
-        metrics.style.display = "grid";
-        breakBtn.style.display = "inline-flex";
-        breakBtn.innerText = appState.onBreak ? "▶ Resume Duty" : "🍱 Take Break";
+        badge.className = appState.onBreak ? "status-badge on-break" : "status-badge on-duty";
+        metrics.style.display = "grid"; breakBtn.style.display = "inline-flex";
+        breakBtn.innerText = appState.onBreak ? "▶ Resume" : "🍱 Break";
         document.getElementById("lblStartOdo").innerText = appState.startOdo;
-        startLiveShiftTimer();
-        startGpsTracking();
+        startLiveShiftTimer(); startGpsTracking();
     } else {
-        badge.innerText = "OFF DUTY";
-        badge.style.background = "#f1f3f4";
-        badge.style.color = "#5f6368";
-        metrics.style.display = "none";
-        breakBtn.style.display = "none";
+        badge.innerText = "OFF DUTY"; badge.className = "status-badge off-duty";
+        metrics.style.display = "none"; breakBtn.style.display = "none";
         if (appState.liveTimerInterval) clearInterval(appState.liveTimerInterval);
         stopGpsTracking();
     }
 }
 
 function toggleDuty(checked) {
-    if (checked) {
-        appState.pendingOdoType = "START";
-        document.getElementById("checklistModal").style.display = "flex";
-    } else {
-        appState.pendingOdoType = "END";
-        triggerOdometerCamera();
-    }
+    if (checked) { appState.pendingOdoType = "START"; document.getElementById("checklistModal").style.display = "flex"; } 
+    else { appState.pendingOdoType = "END"; triggerOdometerCamera(); }
 }
 
-function confirmChecklist() {
-    document.getElementById("checklistModal").style.display = "none";
-    triggerOdometerCamera();
-}
-
-function triggerOdometerCamera() {
-    document.getElementById("odometerInput").click();
-}
-
+function confirmChecklist() { document.getElementById("checklistModal").style.display = "none"; triggerOdometerCamera(); }
+function triggerOdometerCamera() { document.getElementById("odometerInput").click(); }
 function cancelOdometerCapture() {
-    document.getElementById("checklistModal").style.display = "none";
-    document.getElementById("ocrModal").style.display = "none";
+    document.getElementById("checklistModal").style.display = "none"; document.getElementById("ocrModal").style.display = "none";
     document.getElementById("dutyToggle").checked = appState.onDuty;
-    
-    const fileInput = document.getElementById("odometerInput");
-    if (fileInput) fileInput.value = ""; 
 }
 
 function handleOdometerCapture(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    document.getElementById("ocrModal").style.display = "flex";
-    document.getElementById("ocrProcessingState").style.display = "block";
+    const file = event.target.files[0]; if (!file) return;
+    document.getElementById("ocrModal").style.display = "flex"; document.getElementById("ocrProcessingState").style.display = "block";
     document.getElementById("ocrVerifySection").style.display = "none";
-    document.getElementById("ocrStatusMsg").innerText = "Analyzing odometer image via Tesseract OCR...";
 
-    Tesseract.recognize(file, 'eng', { logger: m => console.log(m) })
-        .then(({ data: { text } }) => {
-            const matches = text.match(/\b\d{4,6}\b/g);
-            let detectedVal = matches ? matches[0] : "";
-            document.getElementById("ocrProcessingState").style.display = "none";
-            document.getElementById("ocrVerifySection").style.display = "block";
-            document.getElementById("odometerInputValue").value = detectedVal;
-        })
-        .catch(err => {
-            document.getElementById("ocrProcessingState").style.display = "none";
-            document.getElementById("ocrVerifySection").style.display = "block";
-            document.getElementById("odometerInputValue").value = "";
-            showToast("OCR engine warning. Please enter reading manually.");
-        });
+    Tesseract.recognize(file, 'eng').then(({ data: { text } }) => {
+        const matches = text.match(/\b\d{4,6}\b/g);
+        document.getElementById("ocrProcessingState").style.display = "none"; document.getElementById("ocrVerifySection").style.display = "block";
+        document.getElementById("odometerInputValue").value = matches ? matches[0] : "";
+    }).catch(() => {
+        document.getElementById("ocrProcessingState").style.display = "none"; document.getElementById("ocrVerifySection").style.display = "block";
+        showToast("OCR warning. Enter manually.");
+    });
 
     const reader = new FileReader();
     reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-            const canvas = document.createElement("canvas");
-            const ctx = canvas.getContext("2d");
-            const MAX_WIDTH = 800; 
-            const scaleSize = MAX_WIDTH / img.width;
-            canvas.width = MAX_WIDTH;
-            canvas.height = img.height * scaleSize;
+        const img = new Image(); img.onload = () => {
+            const canvas = document.createElement("canvas"); const ctx = canvas.getContext("2d");
+            const scaleSize = 800 / img.width; canvas.width = 800; canvas.height = img.height * scaleSize;
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            
-            const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-            appState.currentImageBase64 = dataUrl.split(",")[1];
-        };
-        img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
+            appState.currentImageBase64 = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
+        }; img.src = e.target.result;
+    }; reader.readAsDataURL(file);
 }
 
 function submitOdometerData() {
     const val = parseFloat(document.getElementById("odometerInputValue").value);
-    if (isNaN(val) || val <= 0) { alert("Invalid odometer reading."); return; }
+    if (isNaN(val) || val <= 0) return alert("Invalid reading.");
     document.getElementById("ocrModal").style.display = "none";
 
-    const timestampStr = new Date().toISOString().replace(/[:.]/g, "-");
-    const uniqueFilename = `Odo_${appState.user.username}_${timestampStr}.jpg`;
     let proofText = "No Image";
-
     if (appState.currentImageBase64) {
-        proofText = uniqueFilename;
-        appState.imageQueue.push({ filename: uniqueFilename, imageBase64: appState.currentImageBase64 });
+        proofText = `Odo_${appState.user.username}_${Date.now()}.jpg`;
+        appState.imageQueue.push({ filename: proofText, imageBase64: appState.currentImageBase64 });
         localStorage.setItem(CONFIG.STORAGE_KEYS.IMAGE_QUEUE, JSON.stringify(appState.imageQueue));
     }
 
-    const commonPayload = { user: appState.user.username, timestamp: new Date().toISOString(), imageProof: proofText };
-
+    const payload = { user: appState.user.username, timestamp: new Date().toISOString(), imageProof: proofText };
     if (appState.pendingOdoType === "START") {
-        appState.onDuty = true; appState.startOdo = val; appState.shiftStartTime = new Date(); appState.totalBreakDurationMs = 0; appState.onBreak = false;
-        saveDutyState(); restoreDutyUI();
-        addToQueue({ ...commonPayload, type: "DUTY_START", odometer: val });
-        showToast("Shift started!"); checkMaintenanceAlert(val);
-    } else if (appState.pendingOdoType === "END") {
-        const endOdo = val; const totalKm = endOdo - appState.startOdo;
-        const endTime = new Date(); const durationMin = Math.round((endTime - appState.shiftStartTime - appState.totalBreakDurationMs) / 60000);
-        appState.onDuty = false; appState.onBreak = false;
-        saveDutyState(); restoreDutyUI();
-        addToQueue({ ...commonPayload, type: "DUTY_END", startOdo: appState.startOdo, endOdo: endOdo, distanceKm: totalKm, durationMinutes: durationMin });
-        showToast(`Shift ended! Distance: ${totalKm} km in ${durationMin} mins.`);
+        appState.onDuty = true; appState.startOdo = val; appState.shiftStartTime = new Date(); appState.onBreak = false;
+        addToQueue({ ...payload, type: "DUTY_START", odometer: val });
+        checkMaintenanceAlert(val);
+    } else {
+        const dur = Math.round((new Date() - appState.shiftStartTime - appState.totalBreakDurationMs) / 60000);
+        appState.onDuty = false;
+        addToQueue({ ...payload, type: "DUTY_END", startOdo: appState.startOdo, endOdo: val, distanceKm: val - appState.startOdo, durationMinutes: dur });
     }
-
-    appState.currentImageBase64 = null;
-    processImageQueue(); 
+    saveDutyState(); restoreDutyUI(); processImageQueue(); appState.currentImageBase64 = null;
 }
 
 function toggleBreak() {
-    if (!appState.onDuty) return;
-
-    if (!appState.onBreak) {
-        appState.onBreak = true;
-        appState.breakStartTime = new Date();
-        showToast("Break started.");
-    } else {
-        appState.onBreak = false;
-        if (appState.breakStartTime) {
-            appState.totalBreakDurationMs += (new Date() - appState.breakStartTime);
-            appState.breakStartTime = null;
-        }
-        showToast("Resumed duty.");
-    }
-    saveDutyState();
-    restoreDutyUI();
+    appState.onBreak = !appState.onBreak;
+    if (appState.onBreak) appState.breakStartTime = new Date();
+    else if (appState.breakStartTime) { appState.totalBreakDurationMs += (new Date() - appState.breakStartTime); appState.breakStartTime = null; }
+    saveDutyState(); restoreDutyUI();
 }
 
 function startLiveShiftTimer() {
     if (appState.liveTimerInterval) clearInterval(appState.liveTimerInterval);
     appState.liveTimerInterval = setInterval(() => {
         if (!appState.shiftStartTime) return;
-        let elapsed = new Date() - appState.shiftStartTime - appState.totalBreakDurationMs;
-        if (appState.onBreak && appState.breakStartTime) {
-            elapsed -= (new Date() - appState.breakStartTime);
-        }
-        if (elapsed < 0) elapsed = 0;
-        const hrs = String(Math.floor(elapsed / 3600000)).padStart(2, '0');
-        const mins = String(Math.floor((elapsed % 3600000) / 60000)).padStart(2, '0');
-        document.getElementById("lblLiveTime").innerText = `${hrs}h ${mins}m`;
+        let el = new Date() - appState.shiftStartTime - appState.totalBreakDurationMs;
+        if (appState.onBreak && appState.breakStartTime) el -= (new Date() - appState.breakStartTime);
+        if (el < 0) el = 0;
+        document.getElementById("lblLiveTime").innerText = `${String(Math.floor(el/3600000)).padStart(2,'0')}h ${String(Math.floor((el%3600000)/60000)).padStart(2,'0')}m`;
     }, 1000);
 }
 
-function initMap() {
-    if (appState.map) {
-        setTimeout(() => appState.map.invalidateSize(), 200);
-        return;
-    }
-    
-    appState.map = L.map('map').setView([CONFIG.MAP.DEFAULT_LAT, CONFIG.MAP.DEFAULT_LNG], CONFIG.MAP.ZOOM);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '© OpenStreetMap'
-    }).addTo(appState.map);
+function openExpenseModal() { document.getElementById("expenseModal").style.display = "flex"; }
+function closeExpenseModal() { document.getElementById("expenseModal").style.display = "none"; appState.currentReceiptBase64 = null; document.querySelector("#expenseModal form").reset(); }
 
-    appState.routePolyline = L.polyline([], { color: '#188038', weight: 4 }).addTo(appState.map);
-    setTimeout(() => appState.map.invalidateSize(), 200);
-}
-
-function startGpsTracking() {
-    if (!navigator.geolocation) return;
-    appState.routeCoords = [];
-    appState.gpsWatchId = navigator.geolocation.watchPosition(
-        (pos) => {
-            const { latitude, longitude } = pos.coords;
-            const latLng = [latitude, longitude];
-            appState.routeCoords.push(latLng);
-
-            if (!appState.userMarker) {
-                appState.userMarker = L.marker(latLng).addTo(appState.map);
-            } else {
-                appState.userMarker.setLatLng(latLng);
-            }
-            appState.routePolyline.setLatLngs(appState.routeCoords);
-            appState.map.panTo(latLng);
-        },
-        (err) => console.warn("GPS tracking error:", err),
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 }
-    );
-}
-
-function stopGpsTracking() {
-    if (appState.gpsWatchId !== null) {
-        navigator.geolocation.clearWatch(appState.gpsWatchId);
-        appState.gpsWatchId = null;
-    }
-}
-
-function openExpenseModal() {
-    document.getElementById("expenseModal").style.display = "flex";
-}
-
-function handleReceiptCapture(event) {
-    const file = event.target.files[0];
-    if (!file) {
-        appState.currentReceiptBase64 = null;
-        return;
-    }
-
+function handleReceiptCapture(e) {
+    const f = e.target.files[0]; if (!f) return;
     const reader = new FileReader();
-    reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-            const canvas = document.createElement("canvas");
-            const ctx = canvas.getContext("2d");
-            const MAX_WIDTH = 800;
-            const scaleSize = MAX_WIDTH / img.width;
-            canvas.width = MAX_WIDTH;
-            canvas.height = img.height * scaleSize;
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-            
-            const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-            appState.currentReceiptBase64 = dataUrl.split(",")[1];
-        };
-        img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
+    reader.onload = (ev) => {
+        const img = new Image(); img.onload = () => {
+            const canvas = document.createElement("canvas"); canvas.width = 800; canvas.height = img.height * (800 / img.width);
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            appState.currentReceiptBase64 = canvas.toDataURL("image/jpeg", 0.7).split(",")[1];
+        }; img.src = ev.target.result;
+    }; reader.readAsDataURL(f);
 }
 
 function handleExpenseSubmit(e) {
     e.preventDefault();
-    const type = document.getElementById("expType").value;
-    const qty = parseFloat(document.getElementById("expQty").value);
-    const cost = parseFloat(document.getElementById("expCost").value);
-    const odo = parseFloat(document.getElementById("expOdo").value);
-
-    const timestampStr = new Date().toISOString().replace(/[:.]/g, "-");
-    const uniqueFilename = `Exp_${type}_${appState.user.username}_${timestampStr}.jpg`;
-    let proofText = "No Image";
-
+    let proof = "No Image";
     if (appState.currentReceiptBase64) {
-        proofText = uniqueFilename;
-        appState.imageQueue.push({ filename: uniqueFilename, imageBase64: appState.currentReceiptBase64 });
+        proof = `Exp_${document.getElementById("expType").value}_${Date.now()}.jpg`;
+        appState.imageQueue.push({ filename: proof, imageBase64: appState.currentReceiptBase64 });
         localStorage.setItem(CONFIG.STORAGE_KEYS.IMAGE_QUEUE, JSON.stringify(appState.imageQueue));
     }
-
-    addToQueue({
-        type: "EXPENSE", user: appState.user.username, category: type, quantity: qty, cost: cost,
-        odometer: odo, timestamp: new Date().toISOString(), imageProof: proofText
-    });
-
-    closeExpenseModal();
-    showToast("Expense recorded.");
-    processImageQueue();
-}
-
-function closeExpenseModal() {
-    document.getElementById("expenseModal").style.display = "none";
-    appState.currentReceiptBase64 = null;
-    const receiptInput = document.getElementById("expReceiptInput");
-    if (receiptInput) receiptInput.value = "";
-    document.querySelector("#expenseModal form").reset();
+    addToQueue({ type: "EXPENSE", user: appState.user.username, category: document.getElementById("expType").value, quantity: parseFloat(document.getElementById("expQty").value), cost: parseFloat(document.getElementById("expCost").value), odometer: parseFloat(document.getElementById("expOdo").value), timestamp: new Date().toISOString(), imageProof: proof });
+    closeExpenseModal(); showToast("Expense logged."); processImageQueue();
 }
 
 function addToQueue(item) {
-    appState.queue.push(item);
-    localStorage.setItem(CONFIG.STORAGE_KEYS.QUEUE, JSON.stringify(appState.queue));
-    updateQueueBadge();
-    processQueue();
+    appState.queue.push(item); localStorage.setItem(CONFIG.STORAGE_KEYS.QUEUE, JSON.stringify(appState.queue));
+    updateQueueBadge(); processQueue();
 }
 
 function updateQueueBadge() {
-    const badge = document.getElementById("queueBadge");
-    const totalQueued = appState.queue.length + appState.imageQueue.length;
-    badge.innerText = `${totalQueued} queued`;
-    badge.className = `queue-badge ${totalQueued > 0 ? 'has-items' : ''}`;
+    const b = document.getElementById("queueBadge"); const t = appState.queue.length + appState.imageQueue.length;
+    b.innerText = `${t} queued`; b.className = `queue-badge ${t > 0 ? 'has-items' : ''}`;
 }
 
 function processQueue() {
     if (!navigator.onLine || appState.queue.length === 0) return;
-
-    const item = appState.queue[0];
-    item.spreadsheetId = appState.user.spreadsheetId;
-
-    fetch(CONFIG.APPS_SCRIPT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify(item)
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.status === "success") {
-            appState.queue.shift(); 
-            localStorage.setItem(CONFIG.STORAGE_KEYS.QUEUE, JSON.stringify(appState.queue));
-            updateQueueBadge();
-            
-            if (appState.queue.length > 0) processQueue();
-            else fetchSheetData(true);
-        } else {
-            console.error("Sheet error:", data.message);
-        }
-    })
-    .catch(err => {
-        console.error("Queue process error:", err);
-    });
+    const item = appState.queue[0]; item.spreadsheetId = appState.user.spreadsheetId;
+    fetch(CONFIG.APPS_SCRIPT_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(item) })
+    .then(res => res.json()).then(data => {
+        if (data.status === "success") { appState.queue.shift(); localStorage.setItem(CONFIG.STORAGE_KEYS.QUEUE, JSON.stringify(appState.queue)); updateQueueBadge(); if (appState.queue.length > 0) processQueue(); else fetchSheetData(true); }
+    }).catch(e => console.log(e));
 }
 
 function processImageQueue() {
     if (!navigator.onLine || appState.imageQueue.length === 0) return;
-
-    const item = appState.imageQueue[0];
-    
-    fetch(CONFIG.TERMUX_SERVER_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(item)
-    })
-    .then(res => {
-        if (res.ok) {
-            appState.imageQueue.shift();
-            localStorage.setItem(CONFIG.STORAGE_KEYS.IMAGE_QUEUE, JSON.stringify(appState.imageQueue));
-            updateQueueBadge();
-            if (appState.imageQueue.length > 0) processImageQueue();
-        } else {
-            console.warn("Termux API rejected the image.");
-        }
-    })
-    .catch(err => {
-        console.warn("Termux offline or unreachable. Image kept in queue.", err);
-    });
+    fetch(CONFIG.TERMUX_SERVER_URL, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(appState.imageQueue[0]) })
+    .then(res => { if (res.ok) { appState.imageQueue.shift(); localStorage.setItem(CONFIG.STORAGE_KEYS.IMAGE_QUEUE, JSON.stringify(appState.imageQueue)); updateQueueBadge(); if (appState.imageQueue.length > 0) processImageQueue(); } }).catch(e => console.log(e));
 }
 
-function triggerVoiceInput() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-        showToast("Voice recognition not supported on this browser.");
-        return;
-    }
-
-    const recognition = new SpeechRecognition();
-    recognition.lang = 'en-US';
-    showToast("Listening... speak expense or command.");
-    recognition.start();
-
-    recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        showToast(`Heard: "${transcript}"`);
-        parseVoiceCommand(transcript);
-    };
+function initMap() {
+    if (appState.map) { setTimeout(() => appState.map.invalidateSize(), 200); return; }
+    appState.map = L.map('map').setView([CONFIG.MAP.DEFAULT_LAT, CONFIG.MAP.DEFAULT_LNG], CONFIG.MAP.ZOOM);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(appState.map);
+    appState.routePolyline = L.polyline([], { color: '#188038', weight: 4 }).addTo(appState.map);
 }
+function startGpsTracking() { if(navigator.geolocation) appState.gpsWatchId = navigator.geolocation.watchPosition(pos => { const ll = [pos.coords.latitude, pos.coords.longitude]; appState.routeCoords.push(ll); if(appState.map) { if(!appState.userMarker) appState.userMarker = L.marker(ll).addTo(appState.map); else appState.userMarker.setLatLng(ll); appState.routePolyline.setLatLngs(appState.routeCoords); appState.map.panTo(ll); } }, null, { enableHighAccuracy:true }); }
+function stopGpsTracking() { if(appState.gpsWatchId) navigator.geolocation.clearWatch(appState.gpsWatchId); }
 
-function parseVoiceCommand(cmd) {
-    const lower = cmd.toLowerCase();
-    const numMatches = lower.match(/\d+/g);
-    if (lower.includes("expense") || lower.includes("petrol") || lower.includes("cng") || lower.includes("fuel")) {
-        openExpenseModal();
-        if (numMatches && numMatches[0]) {
-            document.getElementById("expCost").value = numMatches[0];
-        }
-    } else if (lower.includes("start shift") || lower.includes("on duty")) {
-        toggleDuty(true);
-    } else if (lower.includes("end shift") || lower.includes("off duty")) {
-        toggleDuty(false);
-    }
+function checkMaintenanceAlert(o) {
+    let a=[]; if(o%CONFIG.MAINTENANCE_THRESHOLDS.oilChange<300) a.push("Oil"); if(o%CONFIG.MAINTENANCE_THRESHOLDS.tireRotation<300) a.push("Tires");
+    const d=document.getElementById("maintenanceAlertCard");
+    if(a.length>0) { d.style.display="block"; d.innerHTML=`⚠️ Service Due: <strong>${a.join(", ")}</strong>`; } else d.style.display="none";
 }
-
-function exportShiftCSV() {
-    const rows = appState.sheetData[appState.activeTab] || [];
-    if (rows.length === 0) {
-        showToast("No data to export.");
-        return;
-    }
-
-    let csvContent = "data:text/csv;charset=utf-8," + rows.map(e => e.map(c => `"${c}"`).join(",")).join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `${appState.activeTab}_Export_${Date.now()}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-}
-
-function checkMaintenanceAlert(odoVal) {
-    const alertCard = document.getElementById("maintenanceAlertCard");
-    let alerts = [];
-    
-    if (odoVal % CONFIG.MAINTENANCE_THRESHOLDS.oilChange < 300) alerts.push("Oil Change");
-    if (odoVal % CONFIG.MAINTENANCE_THRESHOLDS.tireRotation < 300) alerts.push("Tire Rotation");
-    if (odoVal % CONFIG.MAINTENANCE_THRESHOLDS.brakeInspection < 300) alerts.push("Brake Inspection");
-
-    if (alerts.length > 0) {
-        alertCard.style.display = "block";
-        alertCard.innerHTML = `<strong>⚠️ Maintenance Due Alert</strong>: Odometer at ${odoVal} km is near scheduled service for: <strong>${alerts.join(", ")}</strong>.`;
-    } else {
-        alertCard.style.display = "none";
-    }
-}
-
-function showDiagnostics() {
-    alert(`Diagnostics Report:\n- Online Status: ${navigator.onLine}\n- Data Queue: ${appState.queue.length}\n- Image Queue: ${appState.imageQueue.length}\n- Current Tab: ${appState.activeTab}\n- Active GPS Track Points: ${appState.routeCoords.length}`);
-}
-
-function showToast(msg) {
-    const toast = document.getElementById("toast");
-    toast.innerText = msg;
-    toast.classList.add("show");
-    setTimeout(() => toast.classList.remove("show"), 3000);
-}
+function exportShiftCSV() { let csv="data:text/csv;charset=utf-8,"+appState.filteredCombined.map(e=>e.data.map(c=>`"${c}"`).join(",")).join("\n"); let l=document.createElement("a"); l.href=encodeURI(csv); l.download=`Export_${Date.now()}.csv`; l.click(); }
+function showDiagnostics() { alert(`Online: ${navigator.onLine}\nData Queue: ${appState.queue.length}\nImg Queue: ${appState.imageQueue.length}`); }
+function showToast(m) { const t=document.getElementById("toast"); t.innerText=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"), 3000); }
