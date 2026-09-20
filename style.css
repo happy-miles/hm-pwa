@@ -131,6 +131,49 @@ details[open] .expand-icon { transform: rotate(90deg); }
 /* Buttons */
 .btn-sm { padding: 6px 10px; font-size: 11px; }
 
+/* Exact Google Sheets Table Styling */
+.sheet-table {
+    border-collapse: collapse; /* Forces single bold borders between cells */
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+    white-space: nowrap;
+    width: max-content; /* Prevents text squishing */
+}
+
+/* Strict Black Borders and Compact Density */
+.sheet-table td, 
+.sheet-table th {
+    border: 1px solid #000 !important;
+    padding: 4px 6px !important; /* Compressed density */
+    background-color: #fff; /* Base layer so text doesn't overlap transparent cells */
+}
+
+/* Frozen Panes Support */
+.sheet-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 20; /* Keep frozen rows above scrolling content */
+    box-shadow: 0 3px 0 #000; /* Replicates the thick black line below frozen headers */
+}
+
+/* Sticky Column Support */
+.sheet-table .sticky-col {
+    position: sticky;
+    left: 0;
+    z-index: 15; /* Above scrolling rows, below scrolling headers */
+}
+
+/* Intersecting Frozen Row & Column (Top Left Cell) */
+.sheet-table thead .sticky-col {
+    z-index: 25; /* Highest priority to sit above both axis */
+}
+
+/* Remove default link colors in proof columns so they match Sheet fonts */
+.sheet-table td a {
+    color: inherit;
+    text-decoration: underline;
+}
+
 /* Zoom & Dropdown Styles */
 .zoom-controls { display: flex; gap: 4px; margin-left: auto; margin-right: 12px; }
 .sheet-table select { cursor: pointer; outline: none; padding: 0; appearance: none; -webkit-appearance: none; }
