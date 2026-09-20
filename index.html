@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Happy Miles</title>
     
+    <link rel="icon" type="image/png" href="./icon.png">
     <link rel="manifest" href="./manifest.json">
     <meta name="theme-color" content="#188038">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -47,44 +48,50 @@
         <span id="queueBadge" class="queue-badge">0 queued</span>
         <div class="actions">
             <button class="btn" id="refreshBtn" onclick="fetchSheetData(true)">&#x21bb; Refresh</button>
-            <button class="btn" id="themeBtn" onclick="toggleTheme()">&#x263D;</button>
             <button class="btn primary" id="pwaInstallBtn" style="display:none;" onclick="installPWA()">&#x293B; Install</button>
             <button class="btn" id="logoutBtn" onclick="logout()">Logout</button>
         </div>
         <div class="status">
             <span class="status-dot" id="statusDot"></span>
-            <span id="statusText">Awaiting login...</span>
         </div>
     </div>
 
     <div class="dashboard-panel" id="dashboardPanel" style="display:none;">
-        <div class="card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <div>
-                    <strong>Driver Duty Tracker</strong>
-                    <span id="dutyStatusBadge" style="padding:2px 8px; font-size:11px; border-radius:4px; background:#f1f3f4; color:#5f6368; font-weight:bold; margin-left:6px;">OFF DUTY</span>
+        <details class="duty-accordion" id="dutyAccordion">
+            <summary class="duty-summary">
+                <div class="duty-summary-left">
+                    <span class="expand-icon">▶</span>
+                    <strong>Driver Controls</strong>
+                    <span id="dutyStatusBadge" class="status-badge off-duty">OFF DUTY</span>
                 </div>
-                <input type="checkbox" id="dutyToggle" onchange="toggleDuty(this.checked)" style="width:20px; height:20px;">
-            </div>
-            <div id="dutyMetrics" style="margin-top:10px; font-size:12px; color:#5f6368; display:none; grid-template-columns:1fr 1fr; gap:8px;">
-                <div>Start Odometer: <strong id="lblStartOdo">-</strong> km</div>
-                <div>Shift Duration: <strong id="lblLiveTime">00h 00m</strong></div>
-            </div>
-            <div style="display:flex; gap:6px; margin-top:12px; flex-wrap:wrap;">
-                <button class="btn warning" id="breakBtn" onclick="toggleBreak()" style="flex:1; display:none;">🍱 Take Break</button>
-                <button class="btn secondary" onclick="openExpenseModal()" style="flex:1;">⛽ Log Expense</button>
-                <button class="btn" onclick="triggerVoiceInput()" style="flex:1;">🎙️ Voice Log</button>
-                <button class="btn" onclick="exportShiftCSV()" style="flex:1;">📥 Export CSV</button>
-                <button class="btn" onclick="showDiagnostics()" style="flex:1;">⚙ Diag</button>
-            </div>
-        </div>
+                <div class="duty-summary-right" onclick="event.preventDefault(); openExpenseModal();">
+                    <button class="btn secondary btn-sm">⛽ Log Expense</button>
+                </div>
+            </summary>
+            
+            <div class="accordion-content">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-size:13px; font-weight:600;">Shift Power:</span>
+                    <input type="checkbox" id="dutyToggle" onchange="toggleDuty(this.checked)" style="width:20px; height:20px;">
+                </div>
+                
+                <div id="dutyMetrics" style="font-size:12px; color:#5f6368; display:none; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px;">
+                    <div>Start Odo: <strong id="lblStartOdo">-</strong> km</div>
+                    <div>Duration: <strong id="lblLiveTime">00h 00m</strong></div>
+                </div>
+                
+                <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">
+                    <button class="btn warning" id="breakBtn" onclick="toggleBreak()" style="flex:1; display:none;">🍱 Break</button>
+                    <button class="btn" onclick="exportShiftCSV()" style="flex:1;">📥 CSV</button>
+                    <button class="btn" onclick="showDiagnostics()" style="flex:1;">⚙ Diag</button>
+                </div>
+                
+                <div id="maintenanceAlertCard" class="card" style="display:none; border-left:4px solid #d93025; margin-bottom:12px;"></div>
 
-        <div id="maintenanceAlertCard" class="card" style="display:none; border-left:4px solid #d93025;"></div>
-
-        <div class="card">
-            <strong style="font-size:13px; margin-bottom:8px; display:block;">Active Route GPS Map</strong>
-            <div id="map"></div>
-        </div>
+                <strong style="font-size:13px; margin-bottom:8px; display:block;">Active Route GPS Map</strong>
+                <div id="map"></div>
+            </div>
+        </details>
     </div>
 
     <div class="tabs-container" id="tabBar"></div>
@@ -108,7 +115,7 @@
         </div>
     </div>
 
-    <input type="file" id="odometerInput" accept="image/*" capture="environment" onchange="handleOdometerCapture(event)">
+    <input type="file" id="odometerInput" accept="image/*" capture="environment" onchange="handleOdometerCapture(event)" style="display:none;">
 
     <div class="modal-overlay" id="checklistModal">
         <div class="modal-card">
@@ -134,7 +141,7 @@
                 <p id="ocrStatusMsg" style="font-size:12px; color:#5f6368; margin-top:6px;">Extracting odometer text via OCR...</p>
             </div>
             <div id="ocrVerifySection" style="display:none; text-align:left;">
-                <label style="font-size:12px; font-weight:bold; display:block; margin-bottom:6px;">Confirm Odometer Reading (km):</label>
+                <label style="font-size:12px; font-weight:bold; display:block; margin-bottom:6px;">Confirm Odometer (km):</label>
                 <input type="number" id="odometerInputValue" style="width:100%; padding:8px; font-size:16px; border-radius:4px; border:1px solid #ccc; margin-bottom:12px;">
                 <div style="display:flex; gap:8px;">
                     <button class="btn primary" onclick="submitOdometerData()" style="flex:1;">Submit</button>
@@ -176,16 +183,14 @@
                     <input type="file" id="expReceiptInput" accept="image/*" capture="environment" onchange="handleReceiptCapture(event)" style="width:100%; padding:6px; border-radius:4px; border:1px solid #ccc; background:#fff;">
                 </div>
                 <div style="display:flex; gap:8px;">
-                    <button type="submit" class="btn primary" style="flex:1;">Save Expense</button>
+                    <button type="submit" class="btn primary" style="flex:1;">Save</button>
                     <button type="button" class="btn" onclick="closeExpenseModal()" style="flex:1;">Cancel</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <canvas id="waCanvas" width="400" height="400" style="display:none;"></canvas>
     <div class="toast" id="toast"></div>
-
     <script src="config.js"></script>
     <script src="app.js"></script>
 </body>
