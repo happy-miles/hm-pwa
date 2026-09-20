@@ -1,12 +1,14 @@
 let appState = {
     isLoggedIn: false, user: null,
-    sheetTitle: "Happy Miles", sheetData: {}, sheetColors: {}, activeTab: null,
+    sheetTitle: "Happy Miles", sheetData: {}, sheetFormats: {}, activeTab: null,
     filteredCombined: [], queue: [], imageQueue: [],
     onDuty: false, onBreak: false, startOdo: 0, shiftStartTime: null, breakStartTime: null, totalBreakDurationMs: 0,
     liveTimerInterval: null, backgroundSyncInterval: null, pendingOdoType: null, map: null, gpsWatchId: null,
     userMarker: null, routePolyline: null, routeCoords: [], deferredPrompt: null,
     currentImageBase64: null, currentReceiptBase64: null
 };
+
+let currentZoom = 13; // Base font size for table
 
 document.addEventListener("DOMContentLoaded", () => { initApp(); });
 
@@ -29,19 +31,11 @@ function setupPWAInstallPrompt() {
     });
 }
 
-function installPWA() {
-    if (appState.deferredPrompt) {
-        appState.deferredPrompt.prompt();
-        appState.deferredPrompt.userChoice.then((c) => {
-            if (c.outcome === "accepted") document.getElementById("pwaInstallBtn").style.display = "none";
-            appState.deferredPrompt = null;
-        });
-    }
-}
-
 function loadLocalStorageState() {
     try { appState.queue = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEYS.QUEUE)) || []; } catch(e){}
     try { appState.imageQueue = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEYS.IMAGE_QUEUE)) || []; } catch(e){}
+    try { appState.sheetFormats = JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE)) || {}; } catch(e){}
+    
     const savedDuty = localStorage.getItem(CONFIG.STORAGE_KEYS.DUTY_STATE);
     if (savedDuty) {
         try {
@@ -71,7 +65,7 @@ function checkAuth() {
         document.getElementById("dashboardPanel").style.display = "flex";
         restoreDutyUI();
         
-        // 3-hour Auto Refresh (10,800,000 ms)
+        // 3-hour Auto Refresh
         if(appState.backgroundSyncInterval) clearInterval(appState.backgroundSyncInterval);
         appState.backgroundSyncInterval = setInterval(() => fetchSheetData(true), 10800000);
         
@@ -84,7 +78,7 @@ function checkAuth() {
         if(c) {
             try { 
                 const parsed = JSON.parse(c);
-                appState.sheetTitle = parsed.title; appState.sheetData = parsed.sheets; appState.sheetColors = parsed.colors;
+                appState.sheetTitle = parsed.title; appState.sheetData = parsed.sheets;
                 buildUIFromSheetData(); 
             } catch(e){}
         }
@@ -105,9 +99,10 @@ function handleLogin(e) {
         localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH, "TOKEN_" + Date.now());
         localStorage.setItem(CONFIG.STORAGE_KEYS.USER, JSON.stringify({ username: u, spreadsheetId: CONFIG.USERS[u].spreadsheetId }));
         
-        // Hard wipe cache on fresh login (Issue 4)
+        // Hard wipe cache on fresh login
         localStorage.removeItem(CONFIG.STORAGE_KEYS.DATA_CACHE);
-        appState.sheetData = {}; appState.sheetColors = {}; appState.sheetTitle = "Happy Miles";
+        localStorage.removeItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE);
+        appState.sheetData = {}; appState.sheetFormats = {}; appState.sheetTitle = "Happy Miles";
         checkAuth();
     } else {
         document.getElementById("loginError").style.display = "block";
@@ -117,7 +112,8 @@ function handleLogin(e) {
 function logout() {
     localStorage.removeItem(CONFIG.STORAGE_KEYS.AUTH);
     localStorage.removeItem(CONFIG.STORAGE_KEYS.USER);
-    localStorage.removeItem(CONFIG.STORAGE_KEYS.DATA_CACHE); // Destroy data on logout
+    localStorage.removeItem(CONFIG.STORAGE_KEYS.DATA_CACHE); 
+    localStorage.removeItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE); 
     stopGpsTracking();
     if (appState.liveTimerInterval) clearInterval(appState.liveTimerInterval);
     if (appState.backgroundSyncInterval) clearInterval(appState.backgroundSyncInterval);
@@ -140,19 +136,32 @@ function fetchSheetData(force = false) {
     const sheetArea = document.getElementById("sheetArea");
     if(force && Object.keys(appState.sheetData).length === 0) sheetArea.innerHTML = `<div class="loading-screen"><div class="spinner"></div><div>Fetching live ledger...</div></div>`;
 
+    // STEP 1: Fetch raw text instantly
     fetch(`${CONFIG.APPS_SCRIPT_URL}?action=getData&sheetId=${appState.user.spreadsheetId}`)
         .then(res => res.json())
         .then(data => {
             if (data.status === "success") {
                 appState.sheetTitle = data.title || "Happy Miles";
                 appState.sheetData = data.sheets;
-                appState.sheetColors = data.colors;
-                localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets, colors: data.colors }));
-                buildUIFromSheetData();
-                showToast("Ledger updated.");
+                localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets }));
+                buildUIFromSheetData(); 
+                
+                // STEP 2: Silently fetch formatting in the background
+                fetchSheetFormatting();
             }
-        })
-        .catch(err => console.log("Fetch failed", err));
+        }).catch(err => console.log("Data Fetch failed", err));
+}
+
+function fetchSheetFormatting() {
+    fetch(`${CONFIG.APPS_SCRIPT_URL}?action=getFormat&sheetId=${appState.user.spreadsheetId}`)
+        .then(res => res.json())
+        .then(data => {
+            if (data.status === "success") {
+                appState.sheetFormats = data.formats;
+                localStorage.setItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE, JSON.stringify(data.formats));
+                buildUIFromSheetData(); 
+            }
+        }).catch(err => console.log("Format Fetch failed", err));
 }
 
 function buildUIFromSheetData() {
@@ -191,87 +200,117 @@ function handleFilterChange() { applyFilterAndSearch(); }
 
 function applyFilterAndSearch() {
     const rawRows = appState.sheetData[appState.activeTab] || [];
-    const rawColors = appState.sheetColors[appState.activeTab] || [];
+    const fmt = appState.sheetFormats[appState.activeTab] || null;
     if (rawRows.length === 0) { renderTable([]); return; }
 
-    let combined = rawRows.map((row, i) => ({ data: row, color: rawColors[i] || [], origIndex: i }));
     const term = document.getElementById("searchBox").value.toLowerCase().trim();
     
-    // Header detection (Finds first row starting with a date pattern)
-    let headerEndIdx = 1; 
-    for(let i = 0; i < Math.min(10, combined.length); i++) {
-        if (/^\d{1,2}-[a-zA-Z]{3}-\d{2,4}$/.test(String(combined[i].data[0]).trim())) { headerEndIdx = i; break; }
+    // Determine Frozen Rows based on Google Sheets data (or fallback to regex)
+    let frozenRowCount = fmt && fmt.frozenRows ? fmt.frozenRows : 1;
+    if (!fmt) {
+        for(let i = 0; i < Math.min(10, rawRows.length); i++) {
+            if (/^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(String(rawRows[i][0]).trim())) { frozenRowCount = i; break; }
+        }
+        if (frozenRowCount === 0) frozenRowCount = 1;
     }
-    if (headerEndIdx === 0) headerEndIdx = 1;
 
-    let headers = combined.slice(0, headerEndIdx);
-    let body = combined.slice(headerEndIdx);
+    let headers = rawRows.slice(0, frozenRowCount).map((r, i) => ({ data: r, origIndex: i }));
+    let body = rawRows.slice(frozenRowCount).map((r, i) => ({ data: r, origIndex: i + frozenRowCount }));
 
     if (term !== "") body = body.filter(r => r.data.some(c => String(c).toLowerCase().includes(term)));
     
     appState.filteredCombined = headers.concat(body);
     document.getElementById("rowCount").innerText = `${body.length} rows`;
-    renderTable(headers, body);
+    renderTable(headers, body, fmt);
     calculateSubtotals(headers[headers.length-1]?.data || rawRows[0], body);
 }
 
-function renderTable(headers, bodyRows) {
+function renderTable(headers, bodyRows, fmt) {
     const sheetArea = document.getElementById("sheetArea");
     if (headers.length === 0) { sheetArea.innerHTML = `<div class="loading-screen">Empty</div>`; return; }
 
-    let html = `<table class="sheet-table"><thead>`;
+    const totalCols = headers[0].data.length;
+    let html = `<table class="sheet-table">`;
     
-    // Render Frozen Headers with colspans and manual background colors
-    headers.forEach(rowObj => {
-        html += `<tr>`;
-        let skip = 0;
-        for (let i = 0; i < rowObj.data.length; i++) {
-            if (skip > 0) { skip--; continue; }
-            let val = rowObj.data[i];
-            let colspan = 1;
-            // Calculate empty string merges
-            while (i + colspan < rowObj.data.length && rowObj.data[i + colspan] === "") colspan++;
-            skip = colspan - 1;
-            
-            let bg = rowObj.color[i] && rowObj.color[i] !== "#ffffff" ? `background-color: ${rowObj.color[i]} !important;` : "";
-            html += `<th colspan="${colspan}" style="${bg}">${val}</th>`;
-        }
-        html += `</tr>`;
-    });
-    html += `</thead><tbody>`;
+    // Pre-calculate merged blocks to map HTML rowspans/colspans
+    let skipCell = {}; let spanAttrs = {};
+    if (fmt && fmt.merges) {
+        fmt.merges.forEach(m => {
+            spanAttrs[`${m.r1}_${m.c1}`] = ` rowspan="${m.r2 - m.r1 + 1}" colspan="${m.c2 - m.c1 + 1}" `;
+            for (let r = m.r1; r <= m.r2; r++) {
+                for (let c = m.c1; c <= m.c2; c++) {
+                    if (r !== m.r1 || c !== m.c1) skipCell[`${r}_${c}`] = true;
+                }
+            }
+        });
+    }
 
-    // Render Data Rows with integer rounding, zero-blanking, and manual colors
-    if (bodyRows.length === 0) {
-        html += `<tr><td colspan="${headers[0].data.length}" style="text-align:center;">No records found</td></tr>`;
-    } else {
-        bodyRows.forEach(rowObj => {
-            html += `<tr>`;
-            rowObj.data.forEach((val, idx) => {
-                let displayVal = val;
-                let isDateCol = idx === 0;
-                let bg = rowObj.color[idx] && rowObj.color[idx] !== "#ffffff" ? `background-color: ${rowObj.color[idx]};` : "";
-                
-                // Zero-blanking & Number format logic
+    const renderRow = (rowObj, isHeader) => {
+        let rowHtml = `<tr>`;
+        let origR = rowObj.origIndex;
+        
+        for (let c = 0; c < totalCols; c++) {
+            if (skipCell[`${origR}_${c}`]) continue; // Cell hidden inside a merge
+            
+            let val = rowObj.data[c];
+            let spans = spanAttrs[`${origR}_${c}`] || "";
+            
+            // Build pixel-perfect CSS based on Google formats
+            let style = ""; let classes = [];
+            
+            if (fmt) {
+                if (fmt.bg && fmt.bg[origR] && fmt.bg[origR][c] && fmt.bg[origR][c] !== "#ffffff") style += `background-color: ${fmt.bg[origR][c]} !important;`;
+                if (fmt.fc && fmt.fc[origR] && fmt.fc[origR][c]) style += `color: ${fmt.fc[origR][c]};`;
+                if (fmt.fw && fmt.fw[origR] && fmt.fw[origR][c] === "bold") style += `font-weight: 900;`;
+                if (fmt.ha && fmt.ha[origR] && fmt.ha[origR][c]) style += `text-align: ${fmt.ha[origR][c]};`;
+                if (fmt.va && fmt.va[origR] && fmt.va[origR][c]) style += `vertical-align: ${fmt.va[origR][c]};`;
+                if (fmt.frozenColumns && c < fmt.frozenColumns) classes.push("sticky-col");
+            }
+
+            let displayVal = val;
+            let hasDropdown = fmt && fmt.dropdowns && fmt.dropdowns[origR] && fmt.dropdowns[origR][c];
+            
+            if (hasDropdown && hasDropdown.length > 0) {
+                let opts = hasDropdown;
+                displayVal = `<select onchange="updateCellValue('${appState.activeTab}', ${origR}, ${c}, this.value)" style="width:100%; border:none; background:transparent; font-family:inherit; font-size:inherit; font-weight:inherit; color:inherit;">`;
+                displayVal += `<option value="${val}" selected>${val}</option>`;
+                opts.forEach(opt => {
+                    if(String(opt) !== String(val)) displayVal += `<option value="${opt}">${opt}</option>`;
+                });
+                displayVal += `</select>`;
+            } else if (typeof displayVal === "string" && displayVal.startsWith("http")) {
+                displayVal = `<a href="${displayVal}" target="_blank">Proof</a>`;
+            } else {
                 let valStr = String(val).trim();
                 let num = parseFloat(valStr.replace(/,/g, ''));
-                if (!isNaN(num) && valStr !== "" && !/^[a-zA-Z]/.test(valStr) && !/^\d{1,2}-[a-zA-Z]{3}-\d{2,4}$/.test(valStr)) {
+                if (!isNaN(num) && valStr !== "" && !/^[a-zA-Z]/.test(valStr) && !/^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(valStr)) {
                     let rounded = Math.round(num);
                     if (rounded === 0) displayVal = "";
                     else displayVal = rounded.toLocaleString('en-IN');
                 }
+            }
 
-                if (typeof displayVal === "string" && displayVal.startsWith("http")) {
-                    html += `<td style="${bg}"><a href="${displayVal}" target="_blank" style="color:#1a73e8;text-decoration:underline;">Proof</a></td>`;
-                } else {
-                    let dateClass = isDateCol ? 'class="col-date"' : '';
-                    html += `<td ${dateClass} style="${bg}">${displayVal}</td>`;
-                }
-            });
-            html += `</tr>`;
-        });
+            let cellTag = isHeader ? "th" : "td";
+            let classStr = classes.length > 0 ? `class="${classes.join(' ')}"` : "";
+            rowHtml += `<${cellTag} ${spans} ${classStr} style="${style}">${displayVal}</${cellTag}>`;
+        }
+        rowHtml += `</tr>`;
+        return rowHtml;
+    };
+
+    html += `<thead>`;
+    headers.forEach(h => html += renderRow(h, true));
+    html += `</thead><tbody>`;
+
+    if (bodyRows.length === 0) {
+        html += `<tr><td colspan="${totalCols}" style="text-align:center;">No records found</td></tr>`;
+    } else {
+        bodyRows.forEach(r => html += renderRow(r, false));
     }
+    
     html += `</tbody></table>`;
     sheetArea.innerHTML = html;
+    changeZoom(0); // Apply current zoom state
 }
 
 function calculateSubtotals(headerRow, bodyRows) {
@@ -289,6 +328,38 @@ function calculateSubtotals(headerRow, bodyRows) {
     });
     statHtml += `</div>`;
     bar.innerHTML = statHtml;
+}
+
+function changeZoom(step) {
+    currentZoom += step;
+    if (currentZoom < 9) currentZoom = 9;   
+    if (currentZoom > 24) currentZoom = 24; 
+    const table = document.querySelector(".sheet-table");
+    if (table) table.style.fontSize = currentZoom + "px";
+}
+
+function updateCellValue(sheetName, row, col, value) {
+    if (!navigator.onLine) {
+        alert("Internet required to interact with live formulas.");
+        fetchSheetData(false); // Reverts visual change if offline
+        return;
+    }
+    
+    document.getElementById("syncOverlay").style.display = "flex";
+    
+    const payload = { action: "updateCell", spreadsheetId: appState.user.spreadsheetId, sheetName: sheetName, row: row, col: col, value: value };
+    
+    fetch(CONFIG.APPS_SCRIPT_URL, {
+        method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload)
+    }).then(res => res.json()).then(data => {
+        if (data.status === "success") {
+            setTimeout(() => { fetchSheetData(true); document.getElementById("syncOverlay").style.display = "none"; }, 1500);
+        } else {
+            alert("Failed to update Google Sheet."); document.getElementById("syncOverlay").style.display = "none";
+        }
+    }).catch(e => {
+        alert("Network error."); document.getElementById("syncOverlay").style.display = "none";
+    });
 }
 
 function restoreDutyUI() {
