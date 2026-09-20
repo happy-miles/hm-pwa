@@ -96,17 +96,24 @@
 
     <div class="tabs-container" id="tabBar"></div>
 
-    <div class="toolbar">
+<div class="toolbar">
         <div class="search-wrap">
-            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
-            <input type="text" class="search" id="searchBox" placeholder="Search all columns..." oninput="handleSearchInput()">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 14z"/></svg>
+            <input type="text" class="search" id="searchBox" placeholder="Search..." oninput="handleSearchInput()">
         </div>
         <select class="filter" id="filterBox" onchange="handleFilterChange()">
             <option value="all">All Rows</option>
         </select>
+        
+        <!-- NEW: Zoom Controls -->
+        <div class="zoom-controls">
+            <button class="btn btn-sm" onclick="changeZoom(-1)">A-</button>
+            <button class="btn btn-sm" onclick="changeZoom(1)">A+</button>
+        </div>
+        
         <div class="count" id="rowCount">0 rows</div>
     </div>
-
+    
     <div class="subtotal-bar" id="subtotalBar"></div>
 
     <div class="table-container" id="sheetArea">
@@ -190,6 +197,16 @@
         </div>
     </div>
 
+<!-- NEW: Blocks screen while Google recalculates dropdown logic -->
+    <div class="modal-overlay" id="syncOverlay" style="display:none; z-index:9999;">
+        <div class="modal-card" style="text-align:center; background: transparent; box-shadow: none; color: #fff;">
+            <div class="spinner" style="border-color:#fff; border-top-color:transparent; margin: 0 auto 10px;"></div>
+            <div style="font-weight:bold; font-size:16px;">Syncing change to Google Sheets...</div>
+            <div style="font-size:12px; margin-top:5px;">Recalculating formulas, please wait.</div>
+        </div>
+    </div>
+    
+    
     <div class="toast" id="toast"></div>
     <script src="config.js"></script>
     <script src="app.js"></script>
