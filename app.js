@@ -1,6 +1,6 @@
 let appState = {
     isLoggedIn: false, user: null,
-    sheetTitle: "Happy Miles", sheetData: {}, sheetFormats: {}, hiddenCols: {}, activeTab: null,
+    sheetTitle: "Happy Miles", sheetData: {}, sheetFormats: {}, activeTab: null,
     filteredCombined: [], queue: [], imageQueue: [],
     onDuty: false, onBreak: false, startOdo: 0, shiftStartTime: null, breakStartTime: null, totalBreakDurationMs: 0,
     liveTimerInterval: null, backgroundSyncInterval: null, pendingOdoType: null, map: null, gpsWatchId: null,
@@ -77,7 +77,6 @@ function checkAuth() {
             try { 
                 const parsed = JSON.parse(c);
                 appState.sheetTitle = parsed.title; appState.sheetData = parsed.sheets; 
-                appState.hiddenCols = parsed.hiddenCols || {};
                 buildUIFromSheetData(); 
             } catch(e){}
         }
@@ -100,7 +99,7 @@ function handleLogin(e) {
         
         localStorage.removeItem(CONFIG.STORAGE_KEYS.DATA_CACHE);
         localStorage.removeItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE);
-        appState.sheetData = {}; appState.sheetFormats = {}; appState.hiddenCols = {}; appState.sheetTitle = "Happy Miles";
+        appState.sheetData = {}; appState.sheetFormats = {}; appState.sheetTitle = "Happy Miles";
         checkAuth();
     } else {
         document.getElementById("loginError").style.display = "block";
@@ -129,6 +128,7 @@ function updateNetworkStatus() {
     }
 }
 
+// FETCH TEXT FOR ALL TABS INSTANTLY
 function fetchSheetData(force = false) {
     if (!navigator.onLine) return;
     const sheetArea = document.getElementById("sheetArea");
@@ -140,17 +140,16 @@ function fetchSheetData(force = false) {
             if (data.status === "success") {
                 appState.sheetTitle = data.title || "Happy Miles";
                 appState.sheetData = data.sheets;
-                appState.hiddenCols = data.hiddenCols || {};
                 
-                try {
-                    localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets, hiddenCols: appState.hiddenCols }));
-                } catch(e) { console.warn("Data cache full"); }
+                try { localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets })); } 
+                catch(e) { console.warn("Data cache full"); }
                 
                 buildUIFromSheetData(); 
             }
         }).catch(err => console.log("Data Fetch failed", err));
 }
 
+// FETCH FORMAT FOR ONLY THE ACTIVE TAB
 function fetchSheetFormatting(sheetName) {
     showToast(`🎨 Loading layout for ${sheetName}...`);
     
@@ -159,24 +158,13 @@ function fetchSheetFormatting(sheetName) {
         .then(data => {
             if (data.status === "success" && data.formats) {
                 appState.sheetFormats[sheetName] = data.formats[sheetName];
-                
-                try { 
-                    localStorage.setItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE, JSON.stringify(appState.sheetFormats)); 
-                } catch(e) { 
-                    console.warn("Format cache quota exceeded. Holding in memory."); 
-                    // Failsafe: Clear cache if it gets too heavy, keep new data in memory
-                    localStorage.removeItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE);
-                }
+                try { localStorage.setItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE, JSON.stringify(appState.sheetFormats)); } 
+                catch(e) { localStorage.removeItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE); }
                 
                 if (appState.activeTab === sheetName) applyFilterAndSearch();
                 showToast(`✅ ${sheetName} layout applied.`);
-            } else {
-                showToast(`⚠️ Layout error: ${data.message || 'Unknown'}`);
             }
-        }).catch(err => {
-            console.log("Format Fetch failed", err);
-            showToast(`⚠️ Network error loading layout.`);
-        });
+        }).catch(err => showToast(`⚠️ Network error loading layout.`));
 }
 
 function buildUIFromSheetData() {
@@ -204,7 +192,7 @@ function switchTab(name) {
     document.getElementById("searchBox").value = "";
     populateFilterDropdown(); 
     
-    // Core Fix: Fetch formatting only when user clicks the tab
+    // Only fetch format if we don't have it for this tab
     if (!appState.sheetFormats[name] && navigator.onLine) {
         fetchSheetFormatting(name);
     }
@@ -223,7 +211,9 @@ function handleFilterChange() { applyFilterAndSearch(); }
 function applyFilterAndSearch() {
     const rawRows = appState.sheetData[appState.activeTab] || [];
     const fmt = appState.sheetFormats[appState.activeTab] || null;
-    const hCols = appState.hiddenCols[appState.activeTab] || {};
+    const hRows = fmt ? (fmt.hRows || {}) : {};
+    const hCols = fmt ? (fmt.hCols || {}) : {};
+    
     if (rawRows.length === 0) { renderTable([], [], null, {}); return; }
 
     const term = document.getElementById("searchBox").value.toLowerCase().trim();
@@ -231,65 +221,55 @@ function applyFilterAndSearch() {
     let frozenRowCount = fmt && fmt.frozenRows ? fmt.frozenRows : 1;
     if (!fmt) {
         for(let i = 0; i < Math.min(10, rawRows.length); i++) {
-            if (rawRows[i] !== null && /^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(String(rawRows[i][0]).trim())) { frozenRowCount = i; break; }
+            if (/^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(String(rawRows[i][0]).trim())) { frozenRowCount = i; break; }
         }
         if (frozenRowCount === 0) frozenRowCount = 1;
     }
 
-    let headers = [];
-    for (let i = 0; i < frozenRowCount; i++) {
-        if (rawRows[i] !== null) headers.push({ data: rawRows[i], origIndex: i });
-    }
-
-    let body = [];
-    for (let i = frozenRowCount; i < rawRows.length; i++) {
-        if (rawRows[i] !== null) body.push({ data: rawRows[i], origIndex: i });
+    let headers = []; let body = [];
+    for (let i = 0; i < rawRows.length; i++) {
+        if (hRows[i]) continue;
+        let rowData = { data: rawRows[i], origIndex: i };
+        if (i < frozenRowCount) headers.push(rowData);
+        else body.push(rowData);
     }
 
     if (term !== "") body = body.filter(r => r.data.some((c, idx) => !hCols[idx] && String(c).toLowerCase().includes(term)));
     
-    appState.filteredCombined = headers.concat(body);
     document.getElementById("rowCount").innerText = `${body.length} rows`;
-    renderTable(headers, body, fmt, hCols);
-    
+    renderTable(headers, body, fmt, hCols, hRows);
     calculateSubtotals(headers[headers.length-1]?.data || [], body, hCols);
 }
 
-function renderTable(headers, bodyRows, fmt, hCols) {
+function renderTable(headers, bodyRows, fmt, hCols, hRows) {
     const sheetArea = document.getElementById("sheetArea");
+    
+    // Core CSS fix to allow sticky rows to anchor properly
+    sheetArea.style.maxHeight = "calc(100vh - 180px)";
+    sheetArea.style.overflow = "auto";
+    
     if (headers.length === 0 && bodyRows.length === 0) { sheetArea.innerHTML = `<div class="loading-screen">Empty</div>`; return; }
 
     const rawRows = appState.sheetData[appState.activeTab];
-    let totalCols = 0;
-    let firstValid = rawRows.find(r => r !== null);
-    if (firstValid) totalCols = firstValid.length;
+    let totalCols = rawRows[0].length;
 
     let html = `<table class="sheet-table">`;
     let skipCell = {}; let spanAttrs = {};
     
+    // BULLETPROOF MATRIX MAPPER (Calculates Exact Visible Space)
     if (fmt && fmt.merges) {
         fmt.merges.forEach(m => {
-            let visibleColspan = 0; let visibleRowspan = 0;
-            let anchorR = -1; let anchorC = -1;
+            let vRow = 0; let vCol = 0;
+            let aRow = -1; let aCol = -1;
             
-            for (let r = m.r1; r <= m.r2; r++) {
-                if (rawRows[r] !== null) {
-                    visibleRowspan++;
-                    if (anchorR === -1) anchorR = r;
-                }
-            }
-            for (let c = m.c1; c <= m.c2; c++) {
-                if (!hCols[c]) {
-                    visibleColspan++;
-                    if (anchorC === -1) anchorC = c;
-                }
-            }
+            for (let r = m.r1; r <= m.r2; r++) { if (!hRows[r]) { vRow++; if (aRow === -1) aRow = r; } }
+            for (let c = m.c1; c <= m.c2; c++) { if (!hCols[c]) { vCol++; if (aCol === -1) aCol = c; } }
             
-            if (visibleColspan > 0 && visibleRowspan > 0 && anchorR !== -1 && anchorC !== -1) {
-                spanAttrs[`${anchorR}_${anchorC}`] = ` rowspan="${visibleRowspan}" colspan="${visibleColspan}" `;
+            if (vRow > 0 && vCol > 0) {
+                spanAttrs[`${aRow}_${aCol}`] = ` rowspan="${vRow}" colspan="${vCol}" `;
                 for (let r = m.r1; r <= m.r2; r++) {
                     for (let c = m.c1; c <= m.c2; c++) {
-                        if (r !== anchorR || c !== anchorC) skipCell[`${r}_${c}`] = true;
+                        if (!hRows[r] && !hCols[c] && (r !== aRow || c !== aCol)) skipCell[`${r}_${c}`] = true;
                     }
                 }
             }
@@ -319,22 +299,16 @@ function renderTable(headers, bodyRows, fmt, hCols) {
                 if (fmt.ha && fmt.ha[origR] && fmt.ha[origR][c] && fmt.ha[origR][c] !== "") style += `text-align: ${fmt.ha[origR][c]};`;
                 if (fmt.va && fmt.va[origR] && fmt.va[origR][c] && fmt.va[origR][c] !== "") style += `vertical-align: ${fmt.va[origR][c]};`;
                 
-                if (fmt.frozenColumns && stickyColCounter < fmt.frozenColumns) {
-                    classes.push("sticky-col");
-                    stickyColCounter++;
-                }
+                if (fmt.frozenColumns && stickyColCounter < fmt.frozenColumns) { classes.push("sticky-col"); stickyColCounter++; }
             }
 
             let displayVal = val;
             let hasDropdown = fmt && fmt.dropdowns && fmt.dropdowns[origR] && fmt.dropdowns[origR][c];
             
             if (hasDropdown && hasDropdown.length > 0) {
-                let opts = hasDropdown;
                 displayVal = `<select onchange="updateCellValue('${appState.activeTab}', ${origR}, ${c}, this.value)" style="width:100%; border:none; background:transparent; font-family:inherit; font-size:inherit; font-weight:inherit; color:inherit;">`;
                 displayVal += `<option value="${val}" selected>${val}</option>`;
-                opts.forEach(opt => {
-                    if(String(opt) !== String(val)) displayVal += `<option value="${opt}">${opt}</option>`;
-                });
+                hasDropdown.forEach(opt => { if(String(opt) !== String(val)) displayVal += `<option value="${opt}">${opt}</option>`; });
                 displayVal += `</select>`;
             } else if (typeof displayVal === "string" && displayVal.startsWith("http")) {
                 displayVal = `<a href="${displayVal}" target="_blank">Proof</a>`;
@@ -343,8 +317,7 @@ function renderTable(headers, bodyRows, fmt, hCols) {
                 let num = parseFloat(valStr.replace(/,/g, ''));
                 if (!isNaN(num) && valStr !== "" && !/^[a-zA-Z]/.test(valStr) && !/^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(valStr)) {
                     let rounded = Math.round(num);
-                    if (rounded === 0) displayVal = "";
-                    else displayVal = rounded.toLocaleString('en-IN');
+                    if (rounded === 0) displayVal = ""; else displayVal = rounded.toLocaleString('en-IN');
                 }
             }
 
@@ -356,19 +329,48 @@ function renderTable(headers, bodyRows, fmt, hCols) {
         return rowHtml;
     };
 
-    html += `<thead>`;
-    headers.forEach(h => html += renderRow(h, true));
-    html += `</thead><tbody>`;
-
-    if (bodyRows.length === 0) {
-        html += `<tr><td style="text-align:center;">No records found</td></tr>`;
-    } else {
-        bodyRows.forEach(r => html += renderRow(r, false));
-    }
-    
+    html += `<thead>`; headers.forEach(h => html += renderRow(h, true)); html += `</thead><tbody>`;
+    if (bodyRows.length === 0) html += `<tr><td style="text-align:center;">No records found</td></tr>`;
+    else bodyRows.forEach(r => html += renderRow(r, false));
     html += `</tbody></table>`;
+    
     sheetArea.innerHTML = html;
     changeZoom(0);
+    applyDynamicStickyOffsets(); // Executes dynamic layout lock
+}
+
+// THE DYNAMIC LAYOUT LOCK (Forces multi-row headers to freeze perfectly)
+function applyDynamicStickyOffsets() {
+    setTimeout(() => {
+        const table = document.querySelector(".sheet-table");
+        if(!table) return;
+
+        let currentTop = 0;
+        const theadTrs = table.querySelectorAll("thead tr");
+        theadTrs.forEach(tr => {
+            const ths = tr.querySelectorAll("th");
+            ths.forEach(th => {
+                th.style.position = "sticky";
+                th.style.top = currentTop + "px";
+                th.style.zIndex = "20";
+                th.style.backgroundColor = th.style.backgroundColor || "#f8fafc"; 
+            });
+            currentTop += tr.offsetHeight;
+        });
+
+        const trs = table.querySelectorAll("tr");
+        trs.forEach(tr => {
+            let currentLeft = 0;
+            const stickyCols = tr.querySelectorAll(".sticky-col");
+            stickyCols.forEach(col => {
+                col.style.position = "sticky";
+                col.style.left = currentLeft + "px";
+                col.style.zIndex = col.tagName === "TH" ? "30" : "15";
+                col.style.backgroundColor = col.style.backgroundColor || "#ffffff";
+                currentLeft += col.offsetWidth;
+            });
+        });
+    }, 50);
 }
 
 function calculateSubtotals(headerRow, bodyRows, hCols) {
@@ -399,48 +401,31 @@ function changeZoom(step) {
 }
 
 function updateCellValue(sheetName, row, col, value) {
-    if (!navigator.onLine) {
-        alert("Internet required to interact with live formulas.");
-        fetchSheetData(false); 
-        return;
-    }
-    
+    if (!navigator.onLine) { alert("Internet required to interact with live formulas."); fetchSheetData(false); return; }
     document.getElementById("syncOverlay").style.display = "flex";
-    
     const payload = { action: "updateCell", spreadsheetId: appState.user.spreadsheetId, sheetName: sheetName, row: row, col: col, value: value };
     
-    fetch(CONFIG.APPS_SCRIPT_URL, {
-        method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload)
+    fetch(CONFIG.APPS_SCRIPT_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload)
     }).then(res => res.json()).then(data => {
-        if (data.status === "success") {
-            setTimeout(() => { fetchSheetData(true); document.getElementById("syncOverlay").style.display = "none"; }, 1500);
-        } else {
-            alert("Failed to update Google Sheet."); document.getElementById("syncOverlay").style.display = "none";
-        }
-    }).catch(e => {
-        alert("Network error."); document.getElementById("syncOverlay").style.display = "none";
-    });
+        if (data.status === "success") { setTimeout(() => { fetchSheetData(true); document.getElementById("syncOverlay").style.display = "none"; }, 1500);
+        } else { alert("Failed to update Google Sheet."); document.getElementById("syncOverlay").style.display = "none"; }
+    }).catch(e => { alert("Network error."); document.getElementById("syncOverlay").style.display = "none"; });
 }
 
 function restoreDutyUI() {
-    const toggle = document.getElementById("dutyToggle");
-    const badge = document.getElementById("dutyStatusBadge");
-    const metrics = document.getElementById("dutyMetrics");
-    const breakBtn = document.getElementById("breakBtn");
+    const toggle = document.getElementById("dutyToggle"); const badge = document.getElementById("dutyStatusBadge");
+    const metrics = document.getElementById("dutyMetrics"); const breakBtn = document.getElementById("breakBtn");
 
     toggle.checked = appState.onDuty;
     if (appState.onDuty) {
-        badge.innerText = appState.onBreak ? "ON BREAK" : "ON DUTY";
-        badge.className = appState.onBreak ? "status-badge on-break" : "status-badge on-duty";
-        metrics.style.display = "grid"; breakBtn.style.display = "inline-flex";
-        breakBtn.innerText = appState.onBreak ? "▶ Resume" : "🍱 Break";
+        badge.innerText = appState.onBreak ? "ON BREAK" : "ON DUTY"; badge.className = appState.onBreak ? "status-badge on-break" : "status-badge on-duty";
+        metrics.style.display = "grid"; breakBtn.style.display = "inline-flex"; breakBtn.innerText = appState.onBreak ? "▶ Resume" : "🍱 Break";
         document.getElementById("lblStartOdo").innerText = appState.startOdo;
         startLiveShiftTimer(); startGpsTracking();
     } else {
         badge.innerText = "OFF DUTY"; badge.className = "status-badge off-duty";
         metrics.style.display = "none"; breakBtn.style.display = "none";
-        if (appState.liveTimerInterval) clearInterval(appState.liveTimerInterval);
-        stopGpsTracking();
+        if (appState.liveTimerInterval) clearInterval(appState.liveTimerInterval); stopGpsTracking();
     }
 }
 
@@ -496,11 +481,9 @@ function submitOdometerData() {
     const payload = { user: appState.user.username, timestamp: new Date().toISOString(), imageProof: proofText };
     if (appState.pendingOdoType === "START") {
         appState.onDuty = true; appState.startOdo = val; appState.shiftStartTime = new Date(); appState.onBreak = false;
-        addToQueue({ ...payload, type: "DUTY_START", odometer: val });
-        checkMaintenanceAlert(val);
+        addToQueue({ ...payload, type: "DUTY_START", odometer: val }); checkMaintenanceAlert(val);
     } else {
-        const dur = Math.round((new Date() - appState.shiftStartTime - appState.totalBreakDurationMs) / 60000);
-        appState.onDuty = false;
+        const dur = Math.round((new Date() - appState.shiftStartTime - appState.totalBreakDurationMs) / 60000); appState.onDuty = false;
         addToQueue({ ...payload, type: "DUTY_END", startOdo: appState.startOdo, endOdo: val, distanceKm: val - appState.startOdo, durationMinutes: dur });
     }
     saveDutyState(); restoreDutyUI(); processImageQueue(); appState.currentImageBase64 = null;
@@ -591,5 +574,4 @@ function checkMaintenanceAlert(o) {
     if(a.length>0) { d.style.display="block"; d.innerHTML=`⚠️ Service Due: <strong>${a.join(", ")}</strong>`; } else d.style.display="none";
 }
 function exportShiftCSV() { let csv="data:text/csv;charset=utf-8,"+appState.filteredCombined.map(e=>e.data.filter((_,i)=>!appState.hiddenCols[appState.activeTab]?.[i]).map(c=>`"${c}"`).join(",")).join("\n"); let l=document.createElement("a"); l.href=encodeURI(csv); l.download=`Export_${Date.now()}.csv`; l.click(); }
-function showDiagnostics() { alert(`Online: ${navigator.onLine}\nData Queue: ${appState.queue.length}\nImg Queue: ${appState.imageQueue.length}`); }
 function showToast(m) { const t=document.getElementById("toast"); t.innerText=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"), 3000); }
