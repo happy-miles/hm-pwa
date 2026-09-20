@@ -1,6 +1,6 @@
 let appState = {
     isLoggedIn: false, user: null,
-    sheetTitle: "Happy Miles", sheetData: {}, sheetFormats: {}, activeTab: null,
+    sheetTitle: "Happy Miles", sheetData: {}, sheetFormats: {}, hiddenCols: {}, activeTab: null,
     filteredCombined: [], queue: [], imageQueue: [],
     onDuty: false, onBreak: false, startOdo: 0, shiftStartTime: null, breakStartTime: null, totalBreakDurationMs: 0,
     liveTimerInterval: null, backgroundSyncInterval: null, pendingOdoType: null, map: null, gpsWatchId: null,
@@ -8,7 +8,7 @@ let appState = {
     currentImageBase64: null, currentReceiptBase64: null
 };
 
-let currentZoom = 13; // Base font size for table
+let currentZoom = 13;
 
 document.addEventListener("DOMContentLoaded", () => { initApp(); });
 
@@ -65,7 +65,6 @@ function checkAuth() {
         document.getElementById("dashboardPanel").style.display = "flex";
         restoreDutyUI();
         
-        // 3-hour Auto Refresh
         if(appState.backgroundSyncInterval) clearInterval(appState.backgroundSyncInterval);
         appState.backgroundSyncInterval = setInterval(() => fetchSheetData(true), 10800000);
         
@@ -73,12 +72,12 @@ function checkAuth() {
             if(e.target.open && !appState.map) setTimeout(initMap, 100);
         });
 
-        // Load cached instantly, then fetch fresh if online
         const c = localStorage.getItem(CONFIG.STORAGE_KEYS.DATA_CACHE);
         if(c) {
             try { 
                 const parsed = JSON.parse(c);
-                appState.sheetTitle = parsed.title; appState.sheetData = parsed.sheets;
+                appState.sheetTitle = parsed.title; appState.sheetData = parsed.sheets; 
+                appState.hiddenCols = parsed.hiddenCols || {};
                 buildUIFromSheetData(); 
             } catch(e){}
         }
@@ -99,10 +98,9 @@ function handleLogin(e) {
         localStorage.setItem(CONFIG.STORAGE_KEYS.AUTH, "TOKEN_" + Date.now());
         localStorage.setItem(CONFIG.STORAGE_KEYS.USER, JSON.stringify({ username: u, spreadsheetId: CONFIG.USERS[u].spreadsheetId }));
         
-        // Hard wipe cache on fresh login
         localStorage.removeItem(CONFIG.STORAGE_KEYS.DATA_CACHE);
         localStorage.removeItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE);
-        appState.sheetData = {}; appState.sheetFormats = {}; appState.sheetTitle = "Happy Miles";
+        appState.sheetData = {}; appState.sheetFormats = {}; appState.hiddenCols = {}; appState.sheetTitle = "Happy Miles";
         checkAuth();
     } else {
         document.getElementById("loginError").style.display = "block";
@@ -136,17 +134,15 @@ function fetchSheetData(force = false) {
     const sheetArea = document.getElementById("sheetArea");
     if(force && Object.keys(appState.sheetData).length === 0) sheetArea.innerHTML = `<div class="loading-screen"><div class="spinner"></div><div>Fetching live ledger...</div></div>`;
 
-    // STEP 1: Fetch raw text instantly
     fetch(`${CONFIG.APPS_SCRIPT_URL}?action=getData&sheetId=${appState.user.spreadsheetId}`)
         .then(res => res.json())
         .then(data => {
             if (data.status === "success") {
                 appState.sheetTitle = data.title || "Happy Miles";
                 appState.sheetData = data.sheets;
-                localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets }));
+                appState.hiddenCols = data.hiddenCols || {};
+                localStorage.setItem(CONFIG.STORAGE_KEYS.DATA_CACHE, JSON.stringify({ title: data.title, sheets: data.sheets, hiddenCols: appState.hiddenCols }));
                 buildUIFromSheetData(); 
-                
-                // STEP 2: Silently fetch formatting in the background
                 fetchSheetFormatting();
             }
         }).catch(err => console.log("Data Fetch failed", err));
@@ -158,7 +154,7 @@ function fetchSheetFormatting() {
         .then(data => {
             if (data.status === "success") {
                 appState.sheetFormats = data.formats;
-                localStorage.setItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE, JSON.stringify(data.formats));
+                try { localStorage.setItem(CONFIG.STORAGE_KEYS.FORMAT_CACHE, JSON.stringify(data.formats)); } catch(e){}
                 buildUIFromSheetData(); 
             }
         }).catch(err => console.log("Format Fetch failed", err));
@@ -201,45 +197,76 @@ function handleFilterChange() { applyFilterAndSearch(); }
 function applyFilterAndSearch() {
     const rawRows = appState.sheetData[appState.activeTab] || [];
     const fmt = appState.sheetFormats[appState.activeTab] || null;
-    if (rawRows.length === 0) { renderTable([]); return; }
+    const hCols = appState.hiddenCols[appState.activeTab] || {};
+    if (rawRows.length === 0) { renderTable([], [], null, {}); return; }
 
     const term = document.getElementById("searchBox").value.toLowerCase().trim();
     
-    // Determine Frozen Rows based on Google Sheets data (or fallback to regex)
     let frozenRowCount = fmt && fmt.frozenRows ? fmt.frozenRows : 1;
     if (!fmt) {
         for(let i = 0; i < Math.min(10, rawRows.length); i++) {
-            if (/^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(String(rawRows[i][0]).trim())) { frozenRowCount = i; break; }
+            if (rawRows[i] !== null && /^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(String(rawRows[i][0]).trim())) { frozenRowCount = i; break; }
         }
         if (frozenRowCount === 0) frozenRowCount = 1;
     }
 
-    let headers = rawRows.slice(0, frozenRowCount).map((r, i) => ({ data: r, origIndex: i }));
-    let body = rawRows.slice(frozenRowCount).map((r, i) => ({ data: r, origIndex: i + frozenRowCount }));
+    let headers = [];
+    for (let i = 0; i < frozenRowCount; i++) {
+        if (rawRows[i] !== null) headers.push({ data: rawRows[i], origIndex: i });
+    }
 
-    if (term !== "") body = body.filter(r => r.data.some(c => String(c).toLowerCase().includes(term)));
+    let body = [];
+    for (let i = frozenRowCount; i < rawRows.length; i++) {
+        if (rawRows[i] !== null) body.push({ data: rawRows[i], origIndex: i });
+    }
+
+    if (term !== "") body = body.filter(r => r.data.some((c, idx) => !hCols[idx] && String(c).toLowerCase().includes(term)));
     
     appState.filteredCombined = headers.concat(body);
     document.getElementById("rowCount").innerText = `${body.length} rows`;
-    renderTable(headers, body, fmt);
-    calculateSubtotals(headers[headers.length-1]?.data || rawRows[0], body);
+    renderTable(headers, body, fmt, hCols);
+    
+    // Pass raw data for subtotal calculation
+    calculateSubtotals(headers[headers.length-1]?.data || [], body, hCols);
 }
 
-function renderTable(headers, bodyRows, fmt) {
+function renderTable(headers, bodyRows, fmt, hCols) {
     const sheetArea = document.getElementById("sheetArea");
-    if (headers.length === 0) { sheetArea.innerHTML = `<div class="loading-screen">Empty</div>`; return; }
+    if (headers.length === 0 && bodyRows.length === 0) { sheetArea.innerHTML = `<div class="loading-screen">Empty</div>`; return; }
 
-    const totalCols = headers[0].data.length;
+    const rawRows = appState.sheetData[appState.activeTab];
+    let totalCols = 0;
+    let firstValid = rawRows.find(r => r !== null);
+    if (firstValid) totalCols = firstValid.length;
+
     let html = `<table class="sheet-table">`;
-    
-    // Pre-calculate merged blocks to map HTML rowspans/colspans
     let skipCell = {}; let spanAttrs = {};
+    
+    // Dynamically recalculate merges around hidden rows and columns
     if (fmt && fmt.merges) {
         fmt.merges.forEach(m => {
-            spanAttrs[`${m.r1}_${m.c1}`] = ` rowspan="${m.r2 - m.r1 + 1}" colspan="${m.c2 - m.c1 + 1}" `;
+            let visibleColspan = 0; let visibleRowspan = 0;
+            let anchorR = -1; let anchorC = -1;
+            
             for (let r = m.r1; r <= m.r2; r++) {
-                for (let c = m.c1; c <= m.c2; c++) {
-                    if (r !== m.r1 || c !== m.c1) skipCell[`${r}_${c}`] = true;
+                if (rawRows[r] !== null) {
+                    visibleRowspan++;
+                    if (anchorR === -1) anchorR = r;
+                }
+            }
+            for (let c = m.c1; c <= m.c2; c++) {
+                if (!hCols[c]) {
+                    visibleColspan++;
+                    if (anchorC === -1) anchorC = c;
+                }
+            }
+            
+            if (visibleColspan > 0 && visibleRowspan > 0 && anchorR !== -1 && anchorC !== -1) {
+                spanAttrs[`${anchorR}_${anchorC}`] = ` rowspan="${visibleRowspan}" colspan="${visibleColspan}" `;
+                for (let r = m.r1; r <= m.r2; r++) {
+                    for (let c = m.c1; c <= m.c2; c++) {
+                        if (r !== anchorR || c !== anchorC) skipCell[`${r}_${c}`] = true;
+                    }
                 }
             }
         });
@@ -248,23 +275,31 @@ function renderTable(headers, bodyRows, fmt) {
     const renderRow = (rowObj, isHeader) => {
         let rowHtml = `<tr>`;
         let origR = rowObj.origIndex;
+        let stickyColCounter = 0;
         
         for (let c = 0; c < totalCols; c++) {
-            if (skipCell[`${origR}_${c}`]) continue; // Cell hidden inside a merge
+            if (hCols[c]) continue; // Entirely skips rendering hidden columns
+            if (skipCell[`${origR}_${c}`]) {
+                if (fmt && fmt.frozenColumns && stickyColCounter < fmt.frozenColumns) stickyColCounter++;
+                continue; 
+            }
             
             let val = rowObj.data[c];
             let spans = spanAttrs[`${origR}_${c}`] || "";
-            
-            // Build pixel-perfect CSS based on Google formats
             let style = ""; let classes = [];
             
             if (fmt) {
-                if (fmt.bg && fmt.bg[origR] && fmt.bg[origR][c] && fmt.bg[origR][c] !== "#ffffff") style += `background-color: ${fmt.bg[origR][c]} !important;`;
-                if (fmt.fc && fmt.fc[origR] && fmt.fc[origR][c]) style += `color: ${fmt.fc[origR][c]};`;
-                if (fmt.fw && fmt.fw[origR] && fmt.fw[origR][c] === "bold") style += `font-weight: 900;`;
-                if (fmt.ha && fmt.ha[origR] && fmt.ha[origR][c]) style += `text-align: ${fmt.ha[origR][c]};`;
-                if (fmt.va && fmt.va[origR] && fmt.va[origR][c]) style += `vertical-align: ${fmt.va[origR][c]};`;
-                if (fmt.frozenColumns && c < fmt.frozenColumns) classes.push("sticky-col");
+                if (fmt.bg && fmt.bg[origR] && fmt.bg[origR][c] && fmt.bg[origR][c] !== "") style += `background-color: ${fmt.bg[origR][c]} !important;`;
+                if (fmt.fc && fmt.fc[origR] && fmt.fc[origR][c] && fmt.fc[origR][c] !== "") style += `color: ${fmt.fc[origR][c]};`;
+                if (fmt.fw && fmt.fw[origR] && fmt.fw[origR][c] && fmt.fw[origR][c] === "bold") style += `font-weight: 900;`;
+                if (fmt.ha && fmt.ha[origR] && fmt.ha[origR][c] && fmt.ha[origR][c] !== "") style += `text-align: ${fmt.ha[origR][c]};`;
+                if (fmt.va && fmt.va[origR] && fmt.va[origR][c] && fmt.va[origR][c] !== "") style += `vertical-align: ${fmt.va[origR][c]};`;
+                
+                // Track visible columns for proper sticky assignment
+                if (fmt.frozenColumns && stickyColCounter < fmt.frozenColumns) {
+                    classes.push("sticky-col");
+                    stickyColCounter++;
+                }
             }
 
             let displayVal = val;
@@ -303,23 +338,25 @@ function renderTable(headers, bodyRows, fmt) {
     html += `</thead><tbody>`;
 
     if (bodyRows.length === 0) {
-        html += `<tr><td colspan="${totalCols}" style="text-align:center;">No records found</td></tr>`;
+        html += `<tr><td style="text-align:center;">No records found</td></tr>`;
     } else {
         bodyRows.forEach(r => html += renderRow(r, false));
     }
     
     html += `</tbody></table>`;
     sheetArea.innerHTML = html;
-    changeZoom(0); // Apply current zoom state
+    changeZoom(0);
 }
 
-function calculateSubtotals(headerRow, bodyRows) {
+function calculateSubtotals(headerRow, bodyRows, hCols) {
     const bar = document.getElementById("subtotalBar");
     bar.innerHTML = "";
-    if (bodyRows.length === 0) return;
+    if (bodyRows.length === 0 || headerRow.length === 0) return;
 
     let statHtml = `<div class="stat-group">`;
     headerRow.forEach((h, colIdx) => {
+        if (hCols[colIdx]) return; // Skip subtotal calculation for hidden columns
+        
         let numericVals = bodyRows.map(r => parseFloat(String(r.data[colIdx]).replace(/[^0-9.-]+/g, ""))).filter(v => !isNaN(v));
         if (numericVals.length > 0 && numericVals.length >= bodyRows.length * 0.4 && String(h).trim() !== "") {
             let sum = Math.round(numericVals.reduce((a, b) => a + b, 0));
@@ -341,7 +378,7 @@ function changeZoom(step) {
 function updateCellValue(sheetName, row, col, value) {
     if (!navigator.onLine) {
         alert("Internet required to interact with live formulas.");
-        fetchSheetData(false); // Reverts visual change if offline
+        fetchSheetData(false); 
         return;
     }
     
@@ -530,6 +567,6 @@ function checkMaintenanceAlert(o) {
     const d=document.getElementById("maintenanceAlertCard");
     if(a.length>0) { d.style.display="block"; d.innerHTML=`⚠️ Service Due: <strong>${a.join(", ")}</strong>`; } else d.style.display="none";
 }
-function exportShiftCSV() { let csv="data:text/csv;charset=utf-8,"+appState.filteredCombined.map(e=>e.data.map(c=>`"${c}"`).join(",")).join("\n"); let l=document.createElement("a"); l.href=encodeURI(csv); l.download=`Export_${Date.now()}.csv`; l.click(); }
+function exportShiftCSV() { let csv="data:text/csv;charset=utf-8,"+appState.filteredCombined.map(e=>e.data.filter((_,i)=>!appState.hiddenCols[appState.activeTab]?.[i]).map(c=>`"${c}"`).join(",")).join("\n"); let l=document.createElement("a"); l.href=encodeURI(csv); l.download=`Export_${Date.now()}.csv`; l.click(); }
 function showDiagnostics() { alert(`Online: ${navigator.onLine}\nData Queue: ${appState.queue.length}\nImg Queue: ${appState.imageQueue.length}`); }
 function showToast(m) { const t=document.getElementById("toast"); t.innerText=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"), 3000); }
