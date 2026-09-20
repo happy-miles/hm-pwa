@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Happy Miles</title>
+    
+    <link rel="manifest" href="./manifest.json">
+    <meta name="theme-color" content="#188038">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Happy Miles">
+    <link rel="apple-touch-icon" href="./icon.png">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+<body>
+    <div class="login-overlay" id="loginOverlay">
+        <div class="login-card">
+            <h2>Happy Miles Login</h2>
+            <p>Enter credentials to access your fleet portal</p>
+            <form id="loginForm" onsubmit="handleLogin(event)">
+                <div class="input-group">
+                    <label for="username">Username / ID</label>
+                    <input type="text" id="username" required autocomplete="username">
+                </div>
+                <div class="input-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" required autocomplete="current-password">
+                </div>
+                <button type="submit" class="login-btn">Sign In</button>
+                <div class="login-error" id="loginError">Invalid username or password</div>
+            </form>
+        </div>
+    </div>
+
+    <div class="app-header" id="banner">Happy Miles</div>
+
+    <div class="topbar">
+        <div class="logo">
+            <img src="./icon.png" alt="HM" onerror="this.remove(); this.parentElement.innerText='H';">
+        </div>
+        <div class="title" id="pageTitle">Happy Miles</div>
+        <span id="queueBadge" class="queue-badge">0 queued</span>
+        <div class="actions">
+            <button class="btn" id="refreshBtn" onclick="fetchSheetData(true)">&#x21bb; Refresh</button>
+            <button class="btn" id="themeBtn" onclick="toggleTheme()">&#x263D;</button>
+            <button class="btn primary" id="pwaInstallBtn" style="display:none;" onclick="installPWA()">&#x293B; Install</button>
+            <button class="btn" id="logoutBtn" onclick="logout()">Logout</button>
+        </div>
+        <div class="status">
+            <span class="status-dot" id="statusDot"></span>
+            <span id="statusText">Awaiting login...</span>
+        </div>
+    </div>
+
+    <div class="dashboard-panel" id="dashboardPanel" style="display:none;">
+        <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <strong>Driver Duty Tracker</strong>
+                    <span id="dutyStatusBadge" style="padding:2px 8px; font-size:11px; border-radius:4px; background:#f1f3f4; color:#5f6368; font-weight:bold; margin-left:6px;">OFF DUTY</span>
+                </div>
+                <input type="checkbox" id="dutyToggle" onchange="toggleDuty(this.checked)" style="width:20px; height:20px;">
+            </div>
+            <div id="dutyMetrics" style="margin-top:10px; font-size:12px; color:#5f6368; display:none; grid-template-columns:1fr 1fr; gap:8px;">
+                <div>Start Odometer: <strong id="lblStartOdo">-</strong> km</div>
+                <div>Shift Duration: <strong id="lblLiveTime">00h 00m</strong></div>
+            </div>
+            <div style="display:flex; gap:6px; margin-top:12px; flex-wrap:wrap;">
+                <button class="btn warning" id="breakBtn" onclick="toggleBreak()" style="flex:1; display:none;">🍱 Take Break</button>
+                <button class="btn secondary" onclick="openExpenseModal()" style="flex:1;">⛽ Log Expense</button>
+                <button class="btn" onclick="triggerVoiceInput()" style="flex:1;">🎙️ Voice Log</button>
+                <button class="btn" onclick="exportShiftCSV()" style="flex:1;">📥 Export CSV</button>
+                <button class="btn" onclick="showDiagnostics()" style="flex:1;">⚙ Diag</button>
+            </div>
+        </div>
+
+        <div id="maintenanceAlertCard" class="card" style="display:none; border-left:4px solid #d93025;"></div>
+
+        <div class="card">
+            <strong style="font-size:13px; margin-bottom:8px; display:block;">Active Route GPS Map</strong>
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <div class="tabs-container" id="tabBar"></div>
+
+    <div class="toolbar">
+        <div class="search-wrap">
+            <svg viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+            <input type="text" class="search" id="searchBox" placeholder="Search all columns..." oninput="handleSearchInput()">
+        </div>
+        <select class="filter" id="filterBox" onchange="handleFilterChange()">
+            <option value="all">All Rows</option>
+        </select>
+        <div class="count" id="rowCount">0 rows</div>
+    </div>
+
+    <div class="subtotal-bar" id="subtotalBar"></div>
+
+    <div class="table-container" id="sheetArea">
+        <div class="loading-screen">
+            <div>Please log in to view data.</div>
+        </div>
+    </div>
+
+    <input type="file" id="odometerInput" accept="image/*" capture="environment" onchange="handleOdometerCapture(event)">
+
+    <div class="modal-overlay" id="checklistModal">
+        <div class="modal-card">
+            <h3 style="margin-top:0;">Pre-Shift Vehicle Inspection</h3>
+            <div style="display:flex; flex-direction:column; gap:10px; margin:14px 0;">
+                <label><input type="checkbox" class="chk-item" checked> 🛞 Tires & Pressure</label>
+                <label><input type="checkbox" class="chk-item" checked> 🛑 Brake System</label>
+                <label><input type="checkbox" class="chk-item" checked> 💡 Lights & Signals</label>
+                <label><input type="checkbox" class="chk-item" checked> 🔋 Fluids & Battery</label>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button class="btn primary" onclick="confirmChecklist()" style="flex:1;">Proceed to Camera</button>
+                <button class="btn" onclick="cancelOdometerCapture()" style="flex:1;">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="ocrModal">
+        <div class="modal-card" style="text-align:center;">
+            <div id="ocrProcessingState">
+                <div class="spinner" style="margin: 10px auto;"></div>
+                <div>⏳ Processing Image...</div>
+                <p id="ocrStatusMsg" style="font-size:12px; color:#5f6368; margin-top:6px;">Extracting odometer text via OCR...</p>
+            </div>
+            <div id="ocrVerifySection" style="display:none; text-align:left;">
+                <label style="font-size:12px; font-weight:bold; display:block; margin-bottom:6px;">Confirm Odometer Reading (km):</label>
+                <input type="number" id="odometerInputValue" style="width:100%; padding:8px; font-size:16px; border-radius:4px; border:1px solid #ccc; margin-bottom:12px;">
+                <div style="display:flex; gap:8px;">
+                    <button class="btn primary" onclick="submitOdometerData()" style="flex:1;">Submit</button>
+                    <button class="btn" onclick="cancelOdometerCapture()" style="flex:1;">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="expenseModal">
+        <div class="modal-card">
+            <h3 style="margin-top:0;">Log Expense</h3>
+            <form onsubmit="handleExpenseSubmit(event)">
+                <div style="margin-bottom:8px;">
+                    <label style="font-size:11px; color:#5f6368;">Type</label>
+                    <select id="expType" style="width:100%; padding:6px; border-radius:4px; border:1px solid #ccc;">
+                        <option value="CNG">CNG / Petrol</option>
+                        <option value="EV">EV Charge</option>
+                        <option value="TOLL">Toll / Parking</option>
+                        <option value="MAINTENANCE">Maintenance / Repairs</option>
+                    </select>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+                    <div>
+                        <label style="font-size:11px; color:#5f6368;">Qty (L / kWh)</label>
+                        <input type="number" step="0.01" id="expQty" placeholder="15.5" required style="width:100%; padding:6px; border-radius:4px; border:1px solid #ccc;">
+                    </div>
+                    <div>
+                        <label style="font-size:11px; color:#5f6368;">Cost (₹)</label>
+                        <input type="number" step="0.01" id="expCost" placeholder="1200" required style="width:100%; padding:6px; border-radius:4px; border:1px solid #ccc;">
+                    </div>
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:11px; color:#5f6368;">Current Odometer</label>
+                    <input type="number" id="expOdo" placeholder="45200" required style="width:100%; padding:6px; border-radius:4px; border:1px solid #ccc;">
+                </div>
+                <div style="margin-bottom:12px;">
+                    <label style="font-size:11px; color:#5f6368;">Receipt Photo (Optional)</label>
+                    <input type="file" id="expReceiptInput" accept="image/*" capture="environment" onchange="handleReceiptCapture(event)" style="width:100%; padding:6px; border-radius:4px; border:1px solid #ccc; background:#fff;">
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button type="submit" class="btn primary" style="flex:1;">Save Expense</button>
+                    <button type="button" class="btn" onclick="closeExpenseModal()" style="flex:1;">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <canvas id="waCanvas" width="400" height="400" style="display:none;"></canvas>
+    <div class="toast" id="toast"></div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
