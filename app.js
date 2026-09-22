@@ -128,6 +128,7 @@ function updateNetworkStatus() {
     }
 }
 
+// FETCH TEXT FOR ALL TABS INSTANTLY (Crash-Proof)
 function fetchSheetData(force = false) {
     if (!navigator.onLine) return;
     const sheetArea = document.getElementById("sheetArea");
@@ -148,6 +149,7 @@ function fetchSheetData(force = false) {
         }).catch(err => console.log("Data Fetch failed", err));
 }
 
+// FETCH FORMAT FOR ONLY THE ACTIVE TAB (Crash-Proof)
 function fetchSheetFormatting(sheetName) {
     showToast(`🎨 Loading layout for ${sheetName}...`);
     
@@ -190,6 +192,7 @@ function switchTab(name) {
     document.getElementById("searchBox").value = "";
     populateFilterDropdown(); 
     
+    // Core Fix: Fetch formatting only when user clicks the tab
     if (!appState.sheetFormats[name] && navigator.onLine) {
         fetchSheetFormatting(name);
     }
@@ -208,8 +211,10 @@ function handleFilterChange() { applyFilterAndSearch(); }
 function applyFilterAndSearch() {
     const rawRows = appState.sheetData[appState.activeTab] || [];
     const fmt = appState.sheetFormats[appState.activeTab] || null;
-    const hRows = fmt ? (fmt.hRows || {}) : {};
-    const hCols = fmt ? (fmt.hCols || {}) : {};
+    
+    // Core Fix: Read hidden state ONLY from the on-demand format payload
+    const hRows = fmt && fmt.hRows ? fmt.hRows : {};
+    const hCols = fmt && fmt.hCols ? fmt.hCols : {};
     
     if (rawRows.length === 0) { renderTable([], [], null, {}, {}); return; }
 
@@ -218,7 +223,7 @@ function applyFilterAndSearch() {
     let frozenRowCount = fmt && fmt.frozenRows ? fmt.frozenRows : 1;
     if (!fmt) {
         for(let i = 0; i < Math.min(10, rawRows.length); i++) {
-            if (/^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(String(rawRows[i][0]).trim())) { frozenRowCount = i; break; }
+            if (rawRows[i] && /^\d{1,2}-[a-zA-Z]{3}(?:-\d{2,4})?$/.test(String(rawRows[i][0]).trim())) { frozenRowCount = i; break; }
         }
         if (frozenRowCount === 0) frozenRowCount = 1;
     }
@@ -226,7 +231,7 @@ function applyFilterAndSearch() {
     let headers = []; let body = [];
     for (let i = 0; i < rawRows.length; i++) {
         if (hRows[i]) continue;
-        let rowData = { data: rawRows[i], origIndex: i };
+        let rowData = { data: rawRows[i] || [], origIndex: i };
         if (i < frozenRowCount) headers.push(rowData);
         else body.push(rowData);
     }
@@ -575,5 +580,12 @@ function checkMaintenanceAlert(o) {
     const d=document.getElementById("maintenanceAlertCard");
     if(a.length>0) { d.style.display="block"; d.innerHTML=`⚠️ Service Due: <strong>${a.join(", ")}</strong>`; } else d.style.display="none";
 }
-function exportShiftCSV() { let csv="data:text/csv;charset=utf-8,"+appState.filteredCombined.map(e=>e.data.filter((_,i)=>!appState.hiddenCols[appState.activeTab]?.[i]).map(c=>`"${c}"`).join(",")).join("\n"); let l=document.createElement("a"); l.href=encodeURI(csv); l.download=`Export_${Date.now()}.csv`; l.click(); }
+
+function exportShiftCSV() { 
+    const fmt = appState.sheetFormats[appState.activeTab] || null;
+    const hCols = fmt && fmt.hCols ? fmt.hCols : {};
+    let csv="data:text/csv;charset=utf-8,"+appState.filteredCombined.map(e=>e.data.filter((_,i)=>!hCols[i]).map(c=>`"${c}"`).join(",")).join("\n"); 
+    let l=document.createElement("a"); l.href=encodeURI(csv); l.download=`Export_${Date.now()}.csv`; l.click(); 
+}
+
 function showToast(m) { const t=document.getElementById("toast"); t.innerText=m; t.classList.add("show"); setTimeout(()=>t.classList.remove("show"), 3000); }
