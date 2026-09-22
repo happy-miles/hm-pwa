@@ -128,7 +128,6 @@ function updateNetworkStatus() {
     }
 }
 
-// FETCH TEXT FOR ALL TABS INSTANTLY
 function fetchSheetData(force = false) {
     if (!navigator.onLine) return;
     const sheetArea = document.getElementById("sheetArea");
@@ -149,7 +148,6 @@ function fetchSheetData(force = false) {
         }).catch(err => console.log("Data Fetch failed", err));
 }
 
-// FETCH FORMAT FOR ONLY THE ACTIVE TAB
 function fetchSheetFormatting(sheetName) {
     showToast(`🎨 Loading layout for ${sheetName}...`);
     
@@ -192,7 +190,6 @@ function switchTab(name) {
     document.getElementById("searchBox").value = "";
     populateFilterDropdown(); 
     
-    // Only fetch format if we don't have it for this tab
     if (!appState.sheetFormats[name] && navigator.onLine) {
         fetchSheetFormatting(name);
     }
@@ -214,7 +211,7 @@ function applyFilterAndSearch() {
     const hRows = fmt ? (fmt.hRows || {}) : {};
     const hCols = fmt ? (fmt.hCols || {}) : {};
     
-    if (rawRows.length === 0) { renderTable([], [], null, {}); return; }
+    if (rawRows.length === 0) { renderTable([], [], null, {}, {}); return; }
 
     const term = document.getElementById("searchBox").value.toLowerCase().trim();
     
@@ -244,28 +241,34 @@ function applyFilterAndSearch() {
 function renderTable(headers, bodyRows, fmt, hCols, hRows) {
     const sheetArea = document.getElementById("sheetArea");
     
-    // Core CSS fix to allow sticky rows to anchor properly
+    // Core CSS fix to allow sticky rows to anchor properly without breaking layout bounds
     sheetArea.style.maxHeight = "calc(100vh - 180px)";
     sheetArea.style.overflow = "auto";
     
     if (headers.length === 0 && bodyRows.length === 0) { sheetArea.innerHTML = `<div class="loading-screen">Empty</div>`; return; }
 
     const rawRows = appState.sheetData[appState.activeTab];
-    let totalCols = rawRows[0].length;
+    let totalCols = 0;
+    let firstValid = rawRows.find(r => r !== null);
+    if (firstValid) totalCols = firstValid.length;
 
     let html = `<table class="sheet-table">`;
     let skipCell = {}; let spanAttrs = {};
     
-    // BULLETPROOF MATRIX MAPPER (Calculates Exact Visible Space)
+    // BULLETPROOF MATRIX MAPPER (Calculates Exact Visible Space with Absolute Coordinates)
     if (fmt && fmt.merges) {
         fmt.merges.forEach(m => {
             let vRow = 0; let vCol = 0;
             let aRow = -1; let aCol = -1;
             
-            for (let r = m.r1; r <= m.r2; r++) { if (!hRows[r]) { vRow++; if (aRow === -1) aRow = r; } }
-            for (let c = m.c1; c <= m.c2; c++) { if (!hCols[c]) { vCol++; if (aCol === -1) aCol = c; } }
+            for (let r = m.r1; r <= m.r2; r++) {
+                if (!hRows[r]) { vRow++; if (aRow === -1) aRow = r; }
+            }
+            for (let c = m.c1; c <= m.c2; c++) {
+                if (!hCols[c]) { vCol++; if (aCol === -1) aCol = c; }
+            }
             
-            if (vRow > 0 && vCol > 0) {
+            if (vRow > 0 && vCol > 0 && aRow !== -1 && aCol !== -1) {
                 spanAttrs[`${aRow}_${aCol}`] = ` rowspan="${vRow}" colspan="${vCol}" `;
                 for (let r = m.r1; r <= m.r2; r++) {
                     for (let c = m.c1; c <= m.c2; c++) {
@@ -279,14 +282,10 @@ function renderTable(headers, bodyRows, fmt, hCols, hRows) {
     const renderRow = (rowObj, isHeader) => {
         let rowHtml = `<tr>`;
         let origR = rowObj.origIndex;
-        let stickyColCounter = 0;
         
         for (let c = 0; c < totalCols; c++) {
             if (hCols[c]) continue; 
-            if (skipCell[`${origR}_${c}`]) {
-                if (fmt && fmt.frozenColumns && stickyColCounter < fmt.frozenColumns) stickyColCounter++;
-                continue; 
-            }
+            if (skipCell[`${origR}_${c}`]) continue; // Safely skip hidden merged cells
             
             let val = rowObj.data[c];
             let spans = spanAttrs[`${origR}_${c}`] || "";
@@ -299,7 +298,10 @@ function renderTable(headers, bodyRows, fmt, hCols, hRows) {
                 if (fmt.ha && fmt.ha[origR] && fmt.ha[origR][c] && fmt.ha[origR][c] !== "") style += `text-align: ${fmt.ha[origR][c]};`;
                 if (fmt.va && fmt.va[origR] && fmt.va[origR][c] && fmt.va[origR][c] !== "") style += `vertical-align: ${fmt.va[origR][c]};`;
                 
-                if (fmt.frozenColumns && stickyColCounter < fmt.frozenColumns) { classes.push("sticky-col"); stickyColCounter++; }
+                // Perfect absolute freeze alignment
+                if (fmt.frozenColumns && c < fmt.frozenColumns) {
+                    classes.push("sticky-col");
+                }
             }
 
             let displayVal = val;
@@ -336,10 +338,9 @@ function renderTable(headers, bodyRows, fmt, hCols, hRows) {
     
     sheetArea.innerHTML = html;
     changeZoom(0);
-    applyDynamicStickyOffsets(); // Executes dynamic layout lock
+    applyDynamicStickyOffsets(); 
 }
 
-// THE DYNAMIC LAYOUT LOCK (Forces multi-row headers to freeze perfectly)
 function applyDynamicStickyOffsets() {
     setTimeout(() => {
         const table = document.querySelector(".sheet-table");
@@ -352,7 +353,8 @@ function applyDynamicStickyOffsets() {
             ths.forEach(th => {
                 th.style.position = "sticky";
                 th.style.top = currentTop + "px";
-                th.style.zIndex = "20";
+                // Intersecting corners get a higher z-index to stay above the scroll grid
+                th.style.zIndex = th.classList.contains("sticky-col") ? "35" : "20";
                 th.style.backgroundColor = th.style.backgroundColor || "#f8fafc"; 
             });
             currentTop += tr.offsetHeight;
@@ -365,7 +367,7 @@ function applyDynamicStickyOffsets() {
             stickyCols.forEach(col => {
                 col.style.position = "sticky";
                 col.style.left = currentLeft + "px";
-                col.style.zIndex = col.tagName === "TH" ? "30" : "15";
+                col.style.zIndex = col.tagName === "TH" ? "35" : "15";
                 col.style.backgroundColor = col.style.backgroundColor || "#ffffff";
                 currentLeft += col.offsetWidth;
             });
